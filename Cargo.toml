@@ -1,0 +1,75 @@
+[package]
+name = "nuqr_featurizer"
+version = "0.1.0"
+edition = "2021"
+authors = ["NuQR Team"]
+description = "High-performance histopathology feature extraction library"
+license = "MIT"
+
+[lib]
+name = "nuqr_featurizer"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Python bindings
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
+numpy = "0.22"
+
+# Array operations
+ndarray = { version = "0.16", features = ["rayon", "serde"] }
+ndarray-linalg = { version = "0.16", features = ["openblas-static"] }
+
+# Parallelization
+rayon = "1.10"
+
+# FFT for Fourier descriptors
+rustfft = "6.2"
+num-complex = "0.4"
+
+# Statistics
+statrs = "0.17"
+
+# Image processing (for morphology, contours)
+imageproc = "0.25"
+image = "0.25"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# GPU acceleration (WGPU - cross-platform WebGPU)
+wgpu = "0.19.4"
+bytemuck = { version = "1.14", features = ["derive"] }
+pollster = "0.3"
+futures-intrusive = "0.5"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Serialization (for debugging/testing)
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+approx = "0.5"
+
+[build-dependencies]
+# No build script needed with WGPU (shaders compiled at runtime)
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[[bench]]
+name = "mvp_morphology"
+harness = false
+
+[[bench]]
+name = "gpu_features"
+harness = false
+
+[[bench]]
+name = "benchmark_suite"
+harness = false
