@@ -64,11 +64,6 @@ pub fn calculate_hog_features(
         });
     }
 
-    // Match Python reference early-return condition.
-    if !grayscale_patch.iter().any(|&v| v != 0.0) {
-        return Ok(default_features());
-    }
-
     let (h, w) = grayscale_patch.dim();
     let n_cells_row = h / CELL_ROWS;
     let n_cells_col = w / CELL_COLS;
@@ -76,9 +71,26 @@ pub fn calculate_hog_features(
         return Ok(default_features());
     }
 
+    // Match Python reference: hog is computed on (patch * mask).astype(uint8).
+    let mut masked_image = vec![0.0_f32; h * w];
+    for r in 0..h {
+        for c in 0..w {
+            masked_image[r * w + c] = if mask[[r, c]] {
+                grayscale_patch[[r, c]].clamp(0.0, 255.0)
+            } else {
+                0.0
+            };
+        }
+    }
+
+    // Match Python reference early-return condition.
+    if !masked_image.iter().any(|&v| v > 0.0) {
+        return Ok(default_features());
+    }
+
     // GPU path: use WGPU if requested, available, and image is large enough
     if use_gpu && h >= GPU_MIN_SIZE && w >= GPU_MIN_SIZE && is_gpu_available() {
-        match compute_hog_gpu(grayscale_patch, mask, h, w) {
+        match compute_hog_gpu(&masked_image, h, w) {
             Ok(features) => return Ok(features),
             Err(e) => {
                 // Log GPU failure and fall back to CPU
@@ -88,27 +100,14 @@ pub fn calculate_hog_features(
     }
 
     // CPU path (always available, used as fallback)
-    compute_hog_cpu(grayscale_patch, mask, h, w, n_cells_row, n_cells_col)
+    compute_hog_cpu(&masked_image, h, w, n_cells_row, n_cells_col)
 }
 
 /// GPU-accelerated HOG computation via WGPU
-fn compute_hog_gpu(
-    grayscale_patch: &ArrayView2<f32>,
-    mask: &ArrayView2<bool>,
-    h: usize,
-    w: usize,
-) -> Result<HashMap<String, f64>> {
-    // Use full grayscale patch for gradients and pass mask separately so
-    // background pixels do not inject artificial edge responses.
-    let mut image = vec![0.0_f32; h * w];
-    let mut mask_u32 = vec![0_u32; h * w];
-    for r in 0..h {
-        for c in 0..w {
-            let v = grayscale_patch[[r, c]].clamp(0.0, 255.0);
-            image[r * w + c] = v;
-            mask_u32[r * w + c] = if mask[[r, c]] { 1 } else { 0 };
-        }
-    }
+fn compute_hog_gpu(masked_image: &[f32], h: usize, w: usize) -> Result<HashMap<String, f64>> {
+    let image = masked_image.to_vec();
+    // Include all pixels; masking is already encoded in `image` as zeros.
+    let mask_u32 = vec![1_u32; h * w];
 
     let backend_handle = GpuBackend::get_or_init()?;
     let backend_guard = backend_handle
@@ -132,21 +131,13 @@ fn compute_hog_gpu(
 
 /// CPU HOG computation (original implementation)
 fn compute_hog_cpu(
-    grayscale_patch: &ArrayView2<f32>,
-    mask: &ArrayView2<bool>,
+    masked_image: &[f32],
     h: usize,
     w: usize,
     n_cells_row: usize,
     n_cells_col: usize,
 ) -> Result<HashMap<String, f64>> {
-    // Use unmasked grayscale for gradients and apply mask during histogram
-    // accumulation to avoid artificial boundary edges.
-    let mut image = vec![0.0_f64; h * w];
-    for r in 0..h {
-        for c in 0..w {
-            image[r * w + c] = grayscale_patch[[r, c]].clamp(0.0, 255.0) as f64;
-        }
-    }
+    let image = masked_image.iter().map(|&v| v as f64).collect::<Vec<_>>();
 
     let (g_row, g_col) = channel_gradient(&image, h, w);
     let mut magnitude = vec![0.0_f64; h * w];
@@ -169,7 +160,6 @@ fn compute_hog_cpu(
     let hist = orientation_histograms(
         &magnitude,
         &orientation,
-        mask,
         h,
         w,
         n_cells_row,
@@ -392,7 +382,6 @@ unsafe fn channel_gradient_avx2(
 fn orientation_histograms(
     magnitude: &[f64],
     orientation: &[f64],
-    mask: &ArrayView2<bool>,
     h: usize,
     w: usize,
     n_cells_row: usize,
@@ -430,9 +419,6 @@ fn orientation_histograms(
                             continue;
                         }
                         let idx = rr as usize * w + cc as usize;
-                        if !mask[[rr as usize, cc as usize]] {
-                            continue;
-                        }
                         let ang = orientation[idx];
                         // Match _hoghistogram bin condition:
                         // include if orientation_end <= ang < orientation_start
@@ -571,8 +557,7 @@ mod tests {
         let ori = vec![0.0_f64; 64];
         let mut mag = vec![0.0_f64; 64];
         mag[4 * 8 + 4] = 1.0;
-        let mask = Array2::<bool>::from_elem((8, 8), true);
-        let hist = orientation_histograms(&mag, &ori, &mask.view(), 8, 8, 1, 1, ORIENTATIONS);
+        let hist = orientation_histograms(&mag, &ori, 8, 8, 1, 1, ORIENTATIONS);
         assert!(hist[0] > 0.0);
     }
 

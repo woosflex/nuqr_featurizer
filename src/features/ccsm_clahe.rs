@@ -10,6 +10,7 @@ use crate::core::{FeaturizerError, Result};
 use crate::gpu::{compute_clahe_wgpu, is_gpu_available, GpuBackend};
 
 const N_BINS: usize = 256;
+const NR_OF_GRAY: usize = 1 << 14; // skimage CLAHE internal gray levels
 const GPU_MIN_SIZE: usize = 40;
 const GPU_MAX_PIXELS: usize = 128 * 128;
 
@@ -31,11 +32,10 @@ pub fn clahe_u8_with_gpu(
     let (h, w) = image.dim();
     let n_pixels = h * w;
 
-    if use_gpu
+    if clahe_gpu_enabled(use_gpu)
         && h >= GPU_MIN_SIZE
         && w >= GPU_MIN_SIZE
         && n_pixels <= GPU_MAX_PIXELS
-        && is_gpu_available()
     {
         match compute_clahe_gpu(image, clip_limit, kernel_size) {
             Ok(out) => return Ok(out),
@@ -59,7 +59,7 @@ pub fn clahe_u8_batch_with_gpu(
         return Ok(Vec::new());
     }
 
-    if !use_gpu || !is_gpu_available() {
+    if !clahe_gpu_enabled(use_gpu) {
         return images
             .iter()
             .map(|img| clahe_u8_cpu(&img.view(), clip_limit, kernel_size))
@@ -103,73 +103,20 @@ pub fn clahe_u8_batch_with_gpu(
     Ok(outputs)
 }
 
+fn clahe_gpu_enabled(use_gpu: bool) -> bool {
+    if !use_gpu || !is_gpu_available() {
+        return false;
+    }
+    std::env::var("NUQR_ENABLE_CLAHE_GPU")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
+}
+
 fn clahe_u8_cpu(image: &ArrayView2<u8>, clip_limit: f32, kernel_size: usize) -> Result<Array2<u8>> {
-    let (h, w) = image.dim();
-    if h == 0 || w == 0 {
-        return Err(FeaturizerError::InvalidDimensions {
-            expected: "Non-zero image dimensions".to_string(),
-            got: format!("({}, {})", h, w),
-        });
-    }
-    if kernel_size == 0 {
-        return Err(FeaturizerError::InvalidInput(
-            "kernel_size must be >= 1".to_string(),
-        ));
-    }
-
-    let tile_h = kernel_size;
-    let tile_w = kernel_size;
-    let n_tiles_y = h.div_ceil(tile_h);
-    let n_tiles_x = w.div_ceil(tile_w);
-
-    let mut luts = vec![[0_u8; N_BINS]; n_tiles_y * n_tiles_x];
-
-    for ty in 0..n_tiles_y {
-        let y0 = ty * tile_h;
-        let y1 = ((ty + 1) * tile_h).min(h);
-        for tx in 0..n_tiles_x {
-            let x0 = tx * tile_w;
-            let x1 = ((tx + 1) * tile_w).min(w);
-
-            let tile_pixels = (y1 - y0) * (x1 - x0);
-            let clip = if clip_limit > 0.0 {
-                ((clip_limit * tile_pixels as f32).max(1.0)) as u32
-            } else {
-                tile_pixels as u32
-            };
-
-            let mut hist = [0_u32; N_BINS];
-            for y in y0..y1 {
-                for x in x0..x1 {
-                    hist[image[[y, x]] as usize] += 1;
-                }
-            }
-
-            clip_histogram(&mut hist, clip);
-            luts[ty * n_tiles_x + tx] = histogram_to_lut(&hist, tile_pixels as u32);
-        }
-    }
-
-    let mut out = Array2::<u8>::zeros((h, w));
-    for y in 0..h {
-        let (y0, y1, wy) = interpolation_indices(y, n_tiles_y, tile_h);
-        for x in 0..w {
-            let (x0, x1, wx) = interpolation_indices(x, n_tiles_x, tile_w);
-            let p = image[[y, x]] as usize;
-
-            let v00 = luts[y0 * n_tiles_x + x0][p] as f64;
-            let v01 = luts[y0 * n_tiles_x + x1][p] as f64;
-            let v10 = luts[y1 * n_tiles_x + x0][p] as f64;
-            let v11 = luts[y1 * n_tiles_x + x1][p] as f64;
-
-            let top = (1.0 - wx) * v00 + wx * v01;
-            let bottom = (1.0 - wx) * v10 + wx * v11;
-            let value = ((1.0 - wy) * top + wy * bottom).round().clamp(0.0, 255.0);
-            out[[y, x]] = value as u8;
-        }
-    }
-
-    Ok(out)
+    clahe_u8_cpu_exact_skimage(image, clip_limit, kernel_size)
 }
 
 /// CCSM-specific CLAHE wrapper (same defaults as reference code).
@@ -197,26 +144,6 @@ fn compute_clahe_gpu(
     compute_clahe_wgpu(image, clip_limit, kernel_size, backend)
 }
 
-fn interpolation_indices(coord: usize, n_tiles: usize, tile_size: usize) -> (usize, usize, f64) {
-    let g = coord as f64 / tile_size as f64 - 0.5;
-    let mut i0 = g.floor() as isize;
-    let mut i1 = i0 + 1;
-    let mut w = g - i0 as f64;
-
-    if i0 < 0 {
-        i0 = 0;
-        i1 = 0;
-        w = 0.0;
-    }
-    if i1 >= n_tiles as isize {
-        i1 = n_tiles as isize - 1;
-        i0 = i1;
-        w = 0.0;
-    }
-
-    (i0 as usize, i1 as usize, w.clamp(0.0, 1.0))
-}
-
 fn clip_histogram(hist: &mut [u32; N_BINS], clip_limit: u32) {
     if clip_limit == 0 {
         return;
@@ -235,8 +162,8 @@ fn clip_histogram(hist: &mut [u32; N_BINS], clip_limit: u32) {
         return;
     }
 
-    // Match skimage redistribution strategy.
-    let bin_incr = (n_excess as u64 / N_BINS as u64) as u32;
+    // Match skimage.exposure._adapthist.clip_histogram redistribution sequence.
+    let bin_incr = (n_excess / N_BINS as i64) as u32;
     let upper = clip_limit.saturating_sub(bin_incr);
 
     if bin_incr > 0 {
@@ -244,27 +171,40 @@ fn clip_histogram(hist: &mut [u32; N_BINS], clip_limit: u32) {
             if *h < upper {
                 *h += bin_incr;
                 n_excess -= bin_incr as i64;
-            } else if *h >= upper && *h < clip_limit {
-                n_excess += (*h as i64) - clip_limit as i64;
-                *h = clip_limit;
             }
+        }
+    }
+
+    for h in hist.iter_mut() {
+        if *h >= upper && *h < clip_limit {
+            n_excess += (*h as i64) - clip_limit as i64;
+            *h = clip_limit;
         }
     }
 
     while n_excess > 0 {
         let prev = n_excess;
-        let n_under = hist.iter().filter(|&&v| v < clip_limit).count();
-        if n_under == 0 {
-            break;
-        }
-        let step_size = (n_under / n_excess as usize).max(1);
-        let mut idx = 0usize;
-        while idx < N_BINS && n_excess > 0 {
-            if hist[idx] < clip_limit {
-                hist[idx] += 1;
-                n_excess -= 1;
+        for index in 0..N_BINS {
+            if n_excess <= 0 {
+                break;
             }
-            idx += step_size;
+
+            let n_under = hist.iter().filter(|&&v| v < clip_limit).count();
+            if n_under == 0 {
+                break;
+            }
+            let step_size = (n_under / n_excess as usize).max(1);
+
+            let mut added = 0_i64;
+            let mut idx = index;
+            while idx < N_BINS {
+                if hist[idx] < clip_limit {
+                    hist[idx] += 1;
+                    added += 1;
+                }
+                idx += step_size;
+            }
+            n_excess -= added;
         }
         if prev == n_excess {
             break;
@@ -272,21 +212,229 @@ fn clip_histogram(hist: &mut [u32; N_BINS], clip_limit: u32) {
     }
 }
 
-fn histogram_to_lut(hist: &[u32; N_BINS], n_pixels: u32) -> [u8; N_BINS] {
-    let mut lut = [0_u8; N_BINS];
+fn preprocess_to_14bit(image: &ArrayView2<u8>) -> Array2<u16> {
+    let (h, w) = image.dim();
+    let mut img_u16 = Array2::<u16>::zeros((h, w));
+    let mut min_v = u16::MAX;
+    let mut max_v = u16::MIN;
+
+    for y in 0..h {
+        for x in 0..w {
+            // skimage img_as_uint for uint8 scales by 257.
+            let v = image[[y, x]] as u16 * 257;
+            img_u16[[y, x]] = v;
+            min_v = min_v.min(v);
+            max_v = max_v.max(v);
+        }
+    }
+
+    let mut out = Array2::<u16>::zeros((h, w));
+    if max_v <= min_v {
+        return out;
+    }
+
+    let max_gray = (NR_OF_GRAY - 1) as f64;
+    let scale = max_gray / (max_v as f64 - min_v as f64);
+    for y in 0..h {
+        for x in 0..w {
+            let v = img_u16[[y, x]] as f64;
+            let mapped = ((v - min_v as f64) * scale).round().clamp(0.0, max_gray);
+            out[[y, x]] = mapped as u16;
+        }
+    }
+    out
+}
+
+fn reflect_index(mut idx: isize, len: usize) -> usize {
+    if len <= 1 {
+        return 0;
+    }
+    let n = len as isize;
+    while idx < 0 || idx >= n {
+        if idx < 0 {
+            idx = -idx;
+        }
+        if idx >= n {
+            idx = 2 * n - idx - 2;
+        }
+    }
+    idx as usize
+}
+
+fn reflect_pad_u16(
+    image: &ArrayView2<u16>,
+    pad_top: usize,
+    pad_bottom: usize,
+    pad_left: usize,
+    pad_right: usize,
+) -> Array2<u16> {
+    let (h, w) = image.dim();
+    let hp = h + pad_top + pad_bottom;
+    let wp = w + pad_left + pad_right;
+    let mut out = Array2::<u16>::zeros((hp, wp));
+
+    for py in 0..hp {
+        let src_y = reflect_index(py as isize - pad_top as isize, h);
+        for px in 0..wp {
+            let src_x = reflect_index(px as isize - pad_left as isize, w);
+            out[[py, px]] = image[[src_y, src_x]];
+        }
+    }
+    out
+}
+
+fn map_histogram_u16(hist: &[u32; N_BINS], max_val: u16, n_pixels: u32) -> [u16; N_BINS] {
+    let mut out = [0_u16; N_BINS];
     if n_pixels == 0 {
-        return lut;
+        return out;
     }
 
     let mut cumsum = 0_u32;
+    let scale = max_val as f64 / n_pixels as f64;
     for i in 0..N_BINS {
         cumsum = cumsum.saturating_add(hist[i]);
-        let mapped = ((cumsum as f64 * 255.0) / n_pixels as f64)
-            .floor()
-            .clamp(0.0, 255.0);
-        lut[i] = mapped as u8;
+        let mapped = (cumsum as f64 * scale).clamp(0.0, max_val as f64);
+        out[i] = mapped as u16;
     }
-    lut
+    out
+}
+
+fn rescale_u16_to_u8_full_range(image: &ArrayView2<u16>) -> Array2<u8> {
+    let (h, w) = image.dim();
+    let mut min_v = u16::MAX;
+    let mut max_v = u16::MIN;
+    for &v in image.iter() {
+        min_v = min_v.min(v);
+        max_v = max_v.max(v);
+    }
+
+    let mut out = Array2::<u8>::zeros((h, w));
+    if max_v <= min_v {
+        return out;
+    }
+
+    let scale = 255.0 / (max_v as f64 - min_v as f64);
+    for y in 0..h {
+        for x in 0..w {
+            let v = image[[y, x]] as f64;
+            let mapped = ((v - min_v as f64) * scale).clamp(0.0, 255.0);
+            out[[y, x]] = mapped as u8;
+        }
+    }
+    out
+}
+
+fn clahe_u8_cpu_exact_skimage(
+    image: &ArrayView2<u8>,
+    clip_limit: f32,
+    kernel_size: usize,
+) -> Result<Array2<u8>> {
+    let (h, w) = image.dim();
+    if h == 0 || w == 0 {
+        return Err(FeaturizerError::InvalidDimensions {
+            expected: "Non-zero image dimensions".to_string(),
+            got: format!("({}, {})", h, w),
+        });
+    }
+    if kernel_size == 0 {
+        return Err(FeaturizerError::InvalidInput(
+            "kernel_size must be >= 1".to_string(),
+        ));
+    }
+
+    let image14 = preprocess_to_14bit(image);
+    let k = kernel_size;
+    let pad_top = k / 2;
+    let pad_left = k / 2;
+    let pad_bottom = ((k - (h % k)) % k) + k.div_ceil(2);
+    let pad_right = ((k - (w % k)) % k) + k.div_ceil(2);
+    let padded = reflect_pad_u16(&image14.view(), pad_top, pad_bottom, pad_left, pad_right);
+    let (hp, wp) = padded.dim();
+
+    let bin_size = 1 + NR_OF_GRAY / N_BINS;
+    let mut binned = Array2::<u8>::zeros((hp, wp));
+    for y in 0..hp {
+        for x in 0..wp {
+            binned[[y, x]] = (padded[[y, x]] as usize / bin_size) as u8;
+        }
+    }
+
+    let ns_hist_y = hp / k - 1;
+    let ns_hist_x = wp / k - 1;
+    let kernel_elements = (k * k) as u32;
+    let clim = if clip_limit > 0.0 {
+        (clip_limit * kernel_elements as f32).max(1.0) as u32
+    } else {
+        kernel_elements
+    };
+
+    let mut maps = vec![[0_u16; N_BINS]; ns_hist_y * ns_hist_x];
+    let hist_start = k / 2;
+    for ty in 0..ns_hist_y {
+        let y0 = hist_start + ty * k;
+        for tx in 0..ns_hist_x {
+            let x0 = hist_start + tx * k;
+            let mut hist = [0_u32; N_BINS];
+            for dy in 0..k {
+                for dx in 0..k {
+                    let b = binned[[y0 + dy, x0 + dx]] as usize;
+                    hist[b] += 1;
+                }
+            }
+            clip_histogram(&mut hist, clim);
+            maps[ty * ns_hist_x + tx] = map_histogram_u16(&hist, (NR_OF_GRAY - 1) as u16, kernel_elements);
+        }
+    }
+
+    // Edge-padding of contextual maps by one in each dimension.
+    let mut map_pad = vec![[0_u16; N_BINS]; (ns_hist_y + 2) * (ns_hist_x + 2)];
+    for py in 0..(ns_hist_y + 2) {
+        let sy = py.saturating_sub(1).min(ns_hist_y.saturating_sub(1));
+        for px in 0..(ns_hist_x + 2) {
+            let sx = px.saturating_sub(1).min(ns_hist_x.saturating_sub(1));
+            map_pad[py * (ns_hist_x + 2) + px] = maps[sy * ns_hist_x + sx];
+        }
+    }
+
+    let ns_proc_y = hp / k;
+    let ns_proc_x = wp / k;
+    let mut result14 = Array2::<u16>::zeros((hp, wp));
+
+    for by in 0..ns_proc_y {
+        for bx in 0..ns_proc_x {
+            let m00 = &map_pad[by * (ns_hist_x + 2) + bx];
+            let m01 = &map_pad[by * (ns_hist_x + 2) + (bx + 1)];
+            let m10 = &map_pad[(by + 1) * (ns_hist_x + 2) + bx];
+            let m11 = &map_pad[(by + 1) * (ns_hist_x + 2) + (bx + 1)];
+
+            for iy in 0..k {
+                let wy = iy as f64 / k as f64;
+                for ix in 0..k {
+                    let wx = ix as f64 / k as f64;
+                    let y = by * k + iy;
+                    let x = bx * k + ix;
+                    let b = binned[[y, x]] as usize;
+
+                    let v00 = m00[b] as f64;
+                    let v01 = m01[b] as f64;
+                    let v10 = m10[b] as f64;
+                    let v11 = m11[b] as f64;
+
+                    let top = (1.0 - wx) * v00 + wx * v01;
+                    let bottom = (1.0 - wx) * v10 + wx * v11;
+                    let value = ((1.0 - wy) * top + wy * bottom)
+                        .clamp(0.0, (NR_OF_GRAY - 1) as f64);
+                    result14[[y, x]] = value as u16;
+                }
+            }
+        }
+    }
+
+    let unpadded = result14
+        .slice(ndarray::s![pad_top..(hp - pad_bottom), pad_left..(wp - pad_right)])
+        .to_owned();
+
+    Ok(rescale_u16_to_u8_full_range(&unpadded.view()))
 }
 
 #[cfg(test)]

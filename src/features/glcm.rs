@@ -50,18 +50,22 @@ pub fn calculate_glcm_features_with_gpu(
         });
     }
 
-    // Build uint8 image from grayscale patch.
+    // Match Python reference: graycomatrix is computed on (patch * mask).astype(uint8).
     let mut img_u8 = Array2::<u8>::zeros(grayscale_patch.dim());
     for ((r, c), &val) in grayscale_patch.indexed_iter() {
-        img_u8[[r, c]] = val.clamp(0.0, 255.0) as u8;
+        img_u8[[r, c]] = if mask[[r, c]] {
+            val.clamp(0.0, 255.0) as u8
+        } else {
+            0
+        };
     }
 
     // Edge case: empty or single non-zero intensity inside mask.
     // Mirrors Python reference logic that ignores zeros for this check.
     let mut seen = [false; 256];
     let mut unique_nonzero = 0usize;
-    for ((r, c), &v) in img_u8.indexed_iter() {
-        if !mask[[r, c]] || v == 0 {
+    for &v in img_u8.iter() {
+        if v == 0 {
             continue;
         }
         let idx = v as usize;
@@ -78,18 +82,19 @@ pub fn calculate_glcm_features_with_gpu(
     }
 
     let (h, w) = grayscale_patch.dim();
+    let full_mask = Array2::<bool>::from_elem((h, w), true);
 
     // Compute GLCM for 4 angles, distance=1.
     let glcm = if use_gpu && h >= GPU_MIN_SIZE && w >= GPU_MIN_SIZE && is_gpu_available() {
-        match compute_glcm_gpu(&img_u8.view(), mask) {
-            Ok(gpu_glcm) => gpu_glcm,
+        match compute_glcm_gpu(&img_u8.view(), &full_mask.view()) {
+            Ok(gpu_glcm) => gpu_glcm.mapv(f64::from),
             Err(e) => {
                 eprintln!("GPU GLCM failed ({}), falling back to CPU", e);
-                graycomatrix(&img_u8.view(), mask, 1, &ANGLES, true, true)?
+                graycomatrix(&img_u8.view(), 1, &ANGLES, true, true)?
             }
         }
     } else {
-        graycomatrix(&img_u8.view(), mask, 1, &ANGLES, true, true)?
+        graycomatrix(&img_u8.view(), 1, &ANGLES, true, true)?
     };
 
     // Compute properties and average across angles.
@@ -133,12 +138,11 @@ fn compute_glcm_gpu(image: &ArrayView2<u8>, mask: &ArrayView2<bool>) -> Result<A
 /// 4D array: [levels × levels × 1 × num_angles]
 fn graycomatrix(
     image: &ArrayView2<u8>,
-    mask: &ArrayView2<bool>,
     distance: usize,
     angles: &[f32],
     symmetric: bool,
     normed: bool,
-) -> Result<Array4<f32>> {
+) -> Result<Array4<f64>> {
     const LEVELS: usize = 256;
     let num_angles = angles.len();
     let (height, width) = image.dim();
@@ -157,46 +161,40 @@ fn graycomatrix(
                 if new_r < 0 || new_r >= height as i32 || new_c < 0 || new_c >= width as i32 {
                     continue;
                 }
-                if !mask[[r, c]] || !mask[[new_r as usize, new_c as usize]] {
-                    continue;
-                }
 
                 let i = image[[r, c]] as usize;
                 let j = image[[new_r as usize, new_c as usize]] as usize;
 
                 p[[i, j, 0, angle_idx]] += 1;
 
-                if symmetric && i != j {
+                if symmetric {
                     p[[j, i, 0, angle_idx]] += 1;
                 }
             }
         }
     }
 
-    // Convert to f32 and normalize if requested
-    let mut p_f32 = p.mapv(|x| x as f32);
+    // Match scikit-image: normalize into float64 probabilities.
+    let mut p_f64 = p.mapv(|x| x as f64);
 
     for angle_idx in 0..num_angles {
-        // Suppress background-origin [0,0] co-occurrence bias.
-        p_f32[[0, 0, 0, angle_idx]] = 0.0;
-
         if normed {
-            let sum: f32 = p_f32.slice(s![.., .., 0, angle_idx]).sum();
+            let sum: f64 = p_f64.slice(s![.., .., 0, angle_idx]).sum();
             if sum > 0.0 {
-                p_f32
+                p_f64
                     .slice_mut(s![.., .., 0, angle_idx])
                     .mapv_inplace(|x| x / sum);
             }
         }
     }
 
-    Ok(p_f32)
+    Ok(p_f64)
 }
 
 /// Convert angle (radians) + distance to (row_offset, col_offset).
 fn angle_to_offset(angle: f32, distance: usize) -> (i32, i32) {
     let d = distance as f32;
-    let dr = (-d * angle.sin()).round() as i32;
+    let dr = (d * angle.sin()).round() as i32;
     let dc = (d * angle.cos()).round() as i32;
     (dr, dc)
 }
@@ -205,12 +203,13 @@ fn angle_to_offset(angle: f32, distance: usize) -> (i32, i32) {
 ///
 /// Returns:
 /// (contrast, dissimilarity, homogeneity, asm, energy, correlation)
-fn compute_all_properties(p: &ArrayView4<f32>) -> (f64, f64, f64, f64, f64, f64) {
+fn compute_all_properties(p: &ArrayView4<f64>) -> (f64, f64, f64, f64, f64, f64) {
     let (levels, _, _, num_angles) = p.dim();
     let mut contrast_sum = 0.0_f64;
     let mut dissimilarity_sum = 0.0_f64;
     let mut homogeneity_sum = 0.0_f64;
     let mut asm_sum = 0.0_f64;
+    let mut energy_sum = 0.0_f64;
     let mut correlation_sum = 0.0_f64;
 
     for a in 0..num_angles {
@@ -225,7 +224,7 @@ fn compute_all_properties(p: &ArrayView4<f32>) -> (f64, f64, f64, f64, f64, f64)
             let i_f = i as f64;
             for j in 0..levels {
                 let j_f = j as f64;
-                let v = p[[i, j, 0, a]] as f64;
+                let v = p[[i, j, 0, a]];
                 let diff = i_f - j_f;
                 let diff2 = diff * diff;
 
@@ -246,7 +245,7 @@ fn compute_all_properties(p: &ArrayView4<f32>) -> (f64, f64, f64, f64, f64, f64)
             let i_f = i as f64;
             for j in 0..levels {
                 let j_f = j as f64;
-                let v = p[[i, j, 0, a]] as f64;
+                let v = p[[i, j, 0, a]];
                 let di = i_f - mu_i;
                 let dj = j_f - mu_j;
                 var_i += v * di * di;
@@ -266,19 +265,20 @@ fn compute_all_properties(p: &ArrayView4<f32>) -> (f64, f64, f64, f64, f64, f64)
         dissimilarity_sum += dissimilarity;
         homogeneity_sum += homogeneity;
         asm_sum += asm;
+        energy_sum += asm.sqrt();
         correlation_sum += correlation;
     }
 
     let inv_angles = 1.0 / num_angles as f64;
     let asm_mean = asm_sum * inv_angles;
-    let energy = asm_mean.sqrt();
+    let energy_mean = energy_sum * inv_angles;
 
     (
         contrast_sum * inv_angles,
         dissimilarity_sum * inv_angles,
         homogeneity_sum * inv_angles,
         asm_mean,
-        energy,
+        energy_mean,
         correlation_sum * inv_angles,
     )
 }

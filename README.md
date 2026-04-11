@@ -45,8 +45,8 @@ print(features[0].keys())  # feature names
   - `masks`: either:
     - `np.ndarray[uint32]` instance map with shape `(H, W)`, or
     - sequence of `np.ndarray[bool]` masks each with shape `(H, W)`
-
-Current Python-level extraction path returns morphology-oriented features per nucleus (for example: `area`, `perimeter`, `centroid_row`, `centroid_col`).
+  - output includes morphology + Hu + advanced shape + NEIS + spatial distance and
+    pre/post normalization feature groups (intensity, GLCM, LBP, H&E color, HOG, CCSM).
 
 ## GPU behavior
 
@@ -69,5 +69,25 @@ The wheel includes `py.typed` and `.pyi` stubs:
 
 - `nuqr_featurizer/__init__.pyi`
 - `nuqr_featurizer/_core.pyi`
+
+## Compare against pre-generated Python features
+
+Use `scripts/compare_with_python_features.py` to compare Rust output with existing CSV features
+without re-running the original Python pipeline.
+
+```bash
+python scripts/compare_with_python_features.py \
+  --dataset-root ~/Downloads/Sample_For_Adnan \
+  --max-images 5 \
+  --summary-csv /tmp/compare_summary.csv \
+  --details-csv /tmp/compare_details.csv \
+  --feature-summary-csv /tmp/compare_feature_summary.csv
+```
+
+Common controls:
+- `--image sample1 --image sample2` to run selected images only
+- `--image-list-file selected_images.txt` for batch selection
+- `--mat-key inst_map` if your `.mat` key is known
+- `--id-column nucleus_id` if the reference CSV has explicit nucleus IDs
 
 For deeper architecture and contributor workflows, see `docs/developer-guide.md`.

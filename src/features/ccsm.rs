@@ -5,9 +5,6 @@
 use std::collections::HashMap;
 
 use image::{GrayImage, Luma};
-use imageproc::drawing::draw_polygon_mut;
-use imageproc::geometry::convex_hull;
-use imageproc::point::Point;
 use imageproc::region_labelling::{connected_components, Connectivity};
 use ndarray::{Array2, ArrayView2};
 
@@ -18,7 +15,6 @@ use crate::features::ccsm_distance_transform::{
 };
 use crate::features::ccsm_gmm::GaussianMixture1D;
 use crate::features::ccsm_morphops::apply_ccsm_morphops;
-use crate::features::shape::largest_external_contour;
 
 /// Compute CCSM feature set (11 features).
 pub fn calculate_ccsm_features(
@@ -48,7 +44,8 @@ pub fn calculate_ccsm_features_with_gpu(
         });
     }
 
-    let img_u8 = grayscale_to_u8(grayscale_patch);
+    // Current parity dataset is generated with a pre-masked grayscale CCSM path.
+    let img_u8 = grayscale_to_u8_masked(grayscale_patch, mask);
     let enhanced = clahe_ccsm_with_gpu(&img_u8.view(), use_gpu)?;
     let dist_map = euclidean_distance_transform_with_gpu(mask, use_gpu)?;
     calculate_ccsm_features_from_intermediates(&enhanced.view(), mask, &dist_map.view())
@@ -85,7 +82,7 @@ pub fn calculate_ccsm_features_batch_with_gpu(
                 got: format!("({}, {})", h, w),
             });
         }
-        patch_u8_batch.push(grayscale_to_u8(&patch.view()));
+        patch_u8_batch.push(grayscale_to_u8_masked(&patch.view(), &mask.view()));
     }
 
     let enhanced_batch = clahe_u8_batch_with_gpu(&patch_u8_batch, 0.03, 16, use_gpu)?;
@@ -136,7 +133,9 @@ fn calculate_ccsm_features_from_intermediates(
     }
 
     // 2-component GMM on masked intensities.
-    let model = GaussianMixture1D::fit(&masked_vals, 2, 500, 1e-4)?;
+    // Match sklearn GaussianMixture defaults used in Python reference:
+    // max_iter=100, tol=1e-3.
+    let model = GaussianMixture1D::fit(&masked_vals, 2, 100, 1e-3)?;
     let labels = model.predict_labels(&masked_vals);
     let condensed_label = model.condensed_component_index();
 
@@ -176,13 +175,25 @@ fn calculate_ccsm_features_from_intermediates(
 
         let (cy, cx) = centroid_from_pixels(pixels);
         centroids.push((cy, cx));
-        eccentricities.push(eccentricity_from_pixels(pixels));
 
         let mut comp_mask = Array2::<bool>::from_elem((h, w), false);
         for &(r, c) in pixels {
             comp_mask[[r, c]] = true;
         }
-        solidities.push(solidity_from_mask(&comp_mask.view(), area));
+
+        let mut comp_eccentricity = 0.0;
+        let mut comp_solidity = 0.0;
+        for (key, value) in
+            crate::features::morphology::calculate_morphological_features(&comp_mask.view())?
+        {
+            match key.as_str() {
+                "eccentricity" => comp_eccentricity = value,
+                "solidity" => comp_solidity = value,
+                _ => {}
+            }
+        }
+        eccentricities.push(comp_eccentricity);
+        solidities.push(comp_solidity);
     }
 
     features.insert("ccsm_mean_clump_area".to_string(), mean(&areas));
@@ -250,12 +261,14 @@ fn default_ccsm_features() -> HashMap<String, f64> {
     .collect()
 }
 
-fn grayscale_to_u8(grayscale: &ArrayView2<f32>) -> Array2<u8> {
+fn grayscale_to_u8_masked(grayscale: &ArrayView2<f32>, mask: &ArrayView2<bool>) -> Array2<u8> {
     let (h, w) = grayscale.dim();
     let mut out = Array2::<u8>::zeros((h, w));
     for y in 0..h {
         for x in 0..w {
-            out[[y, x]] = grayscale[[y, x]].clamp(0.0, 255.0).round() as u8;
+            if mask[[y, x]] {
+                out[[y, x]] = grayscale[[y, x]].clamp(0.0, 255.0) as u8;
+            }
         }
     }
     out
@@ -278,7 +291,7 @@ fn bool_to_gray(mask: &ArrayView2<bool>) -> GrayImage {
 
 fn component_pixels(mask: &ArrayView2<bool>) -> HashMap<u32, Vec<(usize, usize)>> {
     let gray = bool_to_gray(mask);
-    let labels = connected_components(&gray, Connectivity::Four, Luma([0_u8]));
+    let labels = connected_components(&gray, Connectivity::Eight, Luma([0_u8]));
 
     let mut components: HashMap<u32, Vec<(usize, usize)>> = HashMap::new();
     for (x, y, pixel) in labels.enumerate_pixels() {
@@ -301,64 +314,6 @@ fn centroid_from_pixels(pixels: &[(usize, usize)]) -> (f64, f64) {
     let sum_r = pixels.iter().map(|&(r, _)| r as f64).sum::<f64>();
     let sum_c = pixels.iter().map(|&(_, c)| c as f64).sum::<f64>();
     (sum_r / n, sum_c / n)
-}
-
-fn eccentricity_from_pixels(pixels: &[(usize, usize)]) -> f64 {
-    if pixels.len() < 2 {
-        return 0.0;
-    }
-    let (cy, cx) = centroid_from_pixels(pixels);
-    let n = pixels.len() as f64;
-
-    let mut mu20 = 0.0;
-    let mut mu02 = 0.0;
-    let mut mu11 = 0.0;
-    for &(r, c) in pixels {
-        let dy = r as f64 - cy;
-        let dx = c as f64 - cx;
-        mu20 += dx * dx;
-        mu02 += dy * dy;
-        mu11 += dx * dy;
-    }
-    mu20 /= n;
-    mu02 /= n;
-    mu11 /= n;
-
-    let trace = mu20 + mu02;
-    let disc = ((mu20 - mu02) * (mu20 - mu02) + 4.0 * mu11 * mu11).sqrt();
-    let l1 = ((trace + disc) * 0.5).max(0.0);
-    let l2 = ((trace - disc) * 0.5).max(0.0);
-
-    if l1 <= 1e-12 {
-        0.0
-    } else {
-        (1.0 - (l2 / l1).clamp(0.0, 1.0)).sqrt()
-    }
-}
-
-fn solidity_from_mask(mask: &ArrayView2<bool>, area: f64) -> f64 {
-    if area <= 0.0 {
-        return 0.0;
-    }
-    let Some(contour) = largest_external_contour(mask) else {
-        return 0.0;
-    };
-    let hull = convex_hull(contour);
-    if hull.len() < 3 {
-        return 0.0;
-    }
-    let convex_area = convex_hull_pixel_area(&hull, mask.dim());
-    safe_div(area, convex_area)
-}
-
-fn convex_hull_pixel_area(hull: &[Point<i32>], dims: (usize, usize)) -> f64 {
-    if hull.len() < 3 {
-        return 0.0;
-    }
-    let (h, w) = dims;
-    let mut image = GrayImage::new(w as u32, h as u32);
-    draw_polygon_mut(&mut image, hull, Luma([255_u8]));
-    image.pixels().filter(|p| p.0[0] > 0).count() as f64
 }
 
 fn mean(values: &[f64]) -> f64 {
@@ -414,7 +369,7 @@ fn graycomatrix_0deg(image: &ArrayView2<u8>, symmetric: bool, normed: bool) -> A
             let i = image[[y, x]] as usize;
             let j = image[[y, x + 1]] as usize;
             p[[i, j]] += 1.0;
-            if symmetric && i != j {
+            if symmetric {
                 p[[j, i]] += 1.0;
             }
         }

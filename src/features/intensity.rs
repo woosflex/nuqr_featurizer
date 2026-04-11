@@ -9,7 +9,7 @@
 //!
 //! Uses f32 precision per precision_guidelines.md (inherent 8-bit quantization).
 
-use ndarray::{s, Array1, Array2, ArrayView2};
+use ndarray::ArrayView2;
 use std::collections::HashMap;
 
 use crate::core::{FeaturizerError, Result};
@@ -55,38 +55,34 @@ pub fn calculate_intensity_features(
         return Ok(empty_features());
     }
 
-    let n = intensities.len() as f32;
-    let mut sorted = intensities.clone();
+    let n = intensities.len() as f64;
+    let mut sorted: Vec<f64> = intensities.iter().map(|&v| v as f64).collect();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     // Basic statistics
-    let sum: f32 = intensities.iter().sum();
+    let sum: f64 = sorted.iter().sum();
     let mean = sum / n;
 
-    let median = if sorted.len() % 2 == 1 {
-        sorted[sorted.len() / 2]
-    } else {
-        (sorted[sorted.len() / 2 - 1] + sorted[sorted.len() / 2]) / 2.0
-    };
+    let median = percentile_linear(&sorted, 50.0);
 
     let min_val = sorted[0];
     let max_val = sorted[sorted.len() - 1];
     let range = max_val - min_val;
 
-    // Percentiles for IQR
-    let q1_idx = (0.25 * sorted.len() as f32) as usize;
-    let q3_idx = (0.75 * sorted.len() as f32) as usize;
-    let iqr = sorted[q3_idx.min(sorted.len() - 1)] - sorted[q1_idx];
+    // Match NumPy percentile interpolation (`method='linear'`).
+    let q1 = percentile_linear(&sorted, 25.0);
+    let q3 = percentile_linear(&sorted, 75.0);
+    let iqr = q3 - q1;
 
     // Variance and standard deviation
-    let var_sum: f32 = intensities.iter().map(|x| (x - mean).powi(2)).sum();
+    let var_sum: f64 = sorted.iter().map(|x| (x - mean).powi(2)).sum();
     let variance = var_sum / n;
     let std = variance.sqrt();
 
     // Higher moments (skewness, kurtosis)
     let (skewness, kurtosis) = if variance > 1e-8 {
-        let m3: f32 = intensities.iter().map(|x| ((x - mean) / std).powi(3)).sum();
-        let m4: f32 = intensities.iter().map(|x| ((x - mean) / std).powi(4)).sum();
+        let m3: f64 = sorted.iter().map(|x| ((x - mean) / std).powi(3)).sum();
+        let m4: f64 = sorted.iter().map(|x| ((x - mean) / std).powi(4)).sum();
         let skew = m3 / n;
         // Excess kurtosis (scipy.stats default): kurtosis - 3
         let kurt = (m4 / n) - 3.0;
@@ -99,16 +95,16 @@ pub fn calculate_intensity_features(
     let entropy = calculate_entropy(&intensities);
 
     let mut features = HashMap::new();
-    features.insert("mean_intensity".to_string(), mean as f64);
-    features.insert("median_intensity".to_string(), median as f64);
-    features.insert("std_intensity".to_string(), std as f64);
-    features.insert("min_intensity".to_string(), min_val as f64);
-    features.insert("max_intensity".to_string(), max_val as f64);
-    features.insert("range_intensity".to_string(), range as f64);
-    features.insert("iqr_intensity".to_string(), iqr as f64);
-    features.insert("skewness_intensity".to_string(), skewness as f64);
-    features.insert("kurtosis_intensity".to_string(), kurtosis as f64);
-    features.insert("entropy_intensity".to_string(), entropy as f64);
+    features.insert("mean_intensity".to_string(), mean);
+    features.insert("median_intensity".to_string(), median);
+    features.insert("std_intensity".to_string(), std);
+    features.insert("min_intensity".to_string(), min_val);
+    features.insert("max_intensity".to_string(), max_val);
+    features.insert("range_intensity".to_string(), range);
+    features.insert("iqr_intensity".to_string(), iqr);
+    features.insert("skewness_intensity".to_string(), skewness);
+    features.insert("kurtosis_intensity".to_string(), kurtosis);
+    features.insert("entropy_intensity".to_string(), entropy);
 
     Ok(features)
 }
@@ -121,24 +117,47 @@ pub fn calculate_intensity_features(
 /// hist = hist[hist > 0]
 /// entropy = -np.sum(hist * np.log2(hist)) if len(hist) > 0 else 0
 /// ```
-fn calculate_entropy(intensities: &[f32]) -> f32 {
+fn percentile_linear(sorted: &[f64], q: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+    let q = q.clamp(0.0, 100.0) / 100.0;
+    let idx = q * (sorted.len() - 1) as f64;
+    let lo = idx.floor() as usize;
+    let hi = idx.ceil() as usize;
+    if lo == hi {
+        sorted[lo]
+    } else {
+        let w = idx - lo as f64;
+        (1.0 - w) * sorted[lo] + w * sorted[hi]
+    }
+}
+
+fn calculate_entropy(intensities: &[f32]) -> f64 {
     const N_BINS: usize = 256;
     let mut histogram = [0u32; N_BINS];
+    let bin_width = 255.0_f64 / N_BINS as f64;
 
-    // Accumulate histogram
+    // Match numpy histogram(..., bins=256, range=(0, 255), density=True).
     for &val in intensities {
-        let bin = (val.clamp(0.0, 255.0) as usize).min(N_BINS - 1);
+        let v = val.clamp(0.0, 255.0) as f64;
+        let bin = if v >= 255.0 {
+            N_BINS - 1
+        } else {
+            ((v / bin_width).floor() as usize).min(N_BINS - 1)
+        };
         histogram[bin] += 1;
     }
 
-    let total = intensities.len() as f32;
-
-    // Normalize and compute entropy
-    let mut entropy = 0.0_f32;
+    let total = intensities.len() as f64;
+    let mut entropy = 0.0_f64;
     for &count in &histogram {
         if count > 0 {
-            let prob = count as f32 / total;
-            entropy -= prob * prob.log2();
+            let density = count as f64 / (total * bin_width);
+            entropy -= density * density.log2();
         }
     }
 
@@ -190,8 +209,13 @@ mod tests {
         assert_eq!(features.get("std_intensity"), Some(&0.0));
         assert_eq!(features.get("skewness_intensity"), Some(&0.0));
         assert_eq!(features.get("kurtosis_intensity"), Some(&0.0));
-        // Entropy should be 0 (all pixels same value)
-        assert_eq!(features.get("entropy_intensity"), Some(&0.0));
+        // Match numpy histogram(..., density=True) entropy behavior used
+        // by the Python reference implementation.
+        let bin_width: f64 = 255.0 / 256.0;
+        let density: f64 = 1.0 / bin_width;
+        let expected_entropy = -(density * density.log2());
+        let entropy = features.get("entropy_intensity").unwrap();
+        assert!((entropy - expected_entropy).abs() < 1e-9);
     }
 
     #[test]
@@ -240,9 +264,14 @@ mod tests {
 
         let features = calculate_intensity_features(&patch.view(), &mask.view()).unwrap();
 
-        // Entropy = -0.5 * log2(0.5) - 0.5 * log2(0.5) = 1.0
+        // Match reference formula:
+        // hist = np.histogram(..., density=True)
+        // entropy = -sum(hist * log2(hist))
+        let bin_width: f64 = 255.0 / 256.0;
+        let density: f64 = 0.5 / bin_width;
+        let expected = -2.0 * density * density.log2();
         let entropy = features.get("entropy_intensity").unwrap();
-        assert!((entropy - 1.0).abs() < 1e-3);
+        assert!((entropy - expected).abs() < 1e-9);
     }
 
     #[test]

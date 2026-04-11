@@ -35,10 +35,6 @@ pub enum FeaturizerError {
     #[error("CUDA error: {0}")]
     CudaError(String),
 
-    /// Error from native FFI boundaries.
-    #[error("FFI error: {0}")]
-    FfiError(String),
-
     /// Conversion between Python and Rust types failed.
     #[error("Python conversion error: {0}")]
     PythonConversionError(String),

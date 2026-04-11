@@ -2,9 +2,9 @@
 //
 // This shader accumulates symmetric, distance=1 co-occurrence counts for 4 angles:
 // - 0°   => (dr, dc) = ( 0,  1)
-// - 45°  => (dr, dc) = (-1,  1)
-// - 90°  => (dr, dc) = (-1,  0)
-// - 135° => (dr, dc) = (-1, -1)
+// - 45°  => (dr, dc) = ( 1,  1)
+// - 90°  => (dr, dc) = ( 1,  0)
+// - 135° => (dr, dc) = ( 1, -1)
 
 struct GlcmParams {
     width: u32,
@@ -37,7 +37,7 @@ fn accumulate_pair(x: u32, y: u32, i: u32, angle_idx: u32, dc: i32, dr: i32) {
     let ij = plane_base + i * LEVELS + j;
     atomicAdd(&glcm_counts[ij], 1u);
 
-    if (params.symmetric != 0u && i != j) {
+    if (params.symmetric != 0u) {
         let ji = plane_base + j * LEVELS + i;
         atomicAdd(&glcm_counts[ji], 1u);
     }
@@ -60,7 +60,7 @@ fn glcm_accumulate(@builtin(global_invocation_id) global_id: vec3<u32>) {
 
     // 0°, 45°, 90°, 135°
     accumulate_pair(x, y, i, 0u, 1, 0);
-    accumulate_pair(x, y, i, 1u, 1, -1);
-    accumulate_pair(x, y, i, 2u, 0, -1);
-    accumulate_pair(x, y, i, 3u, -1, -1);
+    accumulate_pair(x, y, i, 1u, 1, 1);
+    accumulate_pair(x, y, i, 2u, 0, 1);
+    accumulate_pair(x, y, i, 3u, -1, 1);
 }

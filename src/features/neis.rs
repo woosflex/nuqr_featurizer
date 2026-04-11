@@ -2,7 +2,7 @@
 //!
 //! Port of `calculate_neis_features` from `Final_Code_Features_13.10.py`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::f64::consts::PI;
 
 use ndarray::ArrayView2;
@@ -10,7 +10,6 @@ use rustfft::FftPlanner;
 
 use crate::core::Result;
 use crate::features::morphology::calculate_centroid;
-use crate::features::shape::largest_external_contour;
 
 const DEFAULT_NUM_SAMPLES: usize = 64;
 
@@ -33,9 +32,10 @@ pub fn calculate_neis_features_with_samples(
         return Ok(default_features());
     }
 
-    let Some(contour) = largest_external_contour(mask) else {
+    let Some(contour_raw) = largest_skimage_like_contour(mask) else {
         return Ok(default_features());
     };
+    let contour = dedup_contour_points(&contour_raw);
     if contour.len() < 3 {
         return Ok(default_features());
     }
@@ -49,9 +49,9 @@ pub fn calculate_neis_features_with_samples(
     // Convert contour to polar signal around centroid.
     let mut angle_distance = contour
         .iter()
-        .map(|p| {
-            let dx = p.x as f64 - cx;
-            let dy = p.y as f64 - cy;
+        .map(|&(x, y)| {
+            let dx = x - cx;
+            let dy = y - cy;
             let distance = (dx * dx + dy * dy).sqrt();
             let angle = dy.atan2(dx);
             (angle, distance)
@@ -165,6 +165,200 @@ fn finite_or_zero(v: f64) -> f64 {
     } else {
         0.0
     }
+}
+
+type ContourKey = (i32, i32); // fixed-point key: value*2 supports half-integer coordinates
+
+fn key_to_point(key: ContourKey) -> (f64, f64) {
+    // Return (x, y) = (col, row), matching Python contour_xy convention.
+    (key.1 as f64 * 0.5, key.0 as f64 * 0.5)
+}
+
+pub(crate) fn largest_skimage_like_contour(mask: &ArrayView2<bool>) -> Option<Vec<(f64, f64)>> {
+    let contours = find_contours_binary(mask);
+    contours.into_iter().max_by_key(|c| c.len())
+}
+
+fn find_contours_binary(mask: &ArrayView2<bool>) -> Vec<Vec<(f64, f64)>> {
+    let segments = contour_segments_binary(mask);
+    if segments.is_empty() {
+        return Vec::new();
+    }
+
+    // Port of skimage.measure._find_contours._assemble_contours.
+    let mut current_index = 0usize;
+    let mut contours: HashMap<usize, VecDeque<ContourKey>> = HashMap::new();
+    let mut starts: HashMap<ContourKey, usize> = HashMap::new();
+    let mut ends: HashMap<ContourKey, usize> = HashMap::new();
+
+    for (from_point, to_point) in segments {
+        if from_point == to_point {
+            continue;
+        }
+
+        let tail = starts.remove(&to_point);
+        let head = ends.remove(&from_point);
+
+        match (tail, head) {
+            (Some(tail_num), Some(head_num)) => {
+                if tail_num == head_num {
+                    if let Some(head_contour) = contours.get_mut(&head_num) {
+                        head_contour.push_back(to_point);
+                    }
+                } else if tail_num > head_num {
+                    // tail was created second: append tail to head
+                    let tail_contour = contours.remove(&tail_num).unwrap_or_default();
+                    if let Some(head_contour) = contours.get_mut(&head_num) {
+                        head_contour.extend(tail_contour);
+                        if let Some(&first) = head_contour.front() {
+                            starts.insert(first, head_num);
+                        }
+                        if let Some(&last) = head_contour.back() {
+                            ends.insert(last, head_num);
+                        }
+                    }
+                } else {
+                    // head was created second: prepend head to tail
+                    let head_contour = contours.remove(&head_num).unwrap_or_default();
+                    let old_head_front = head_contour.front().copied();
+                    if let Some(tail_contour) = contours.get_mut(&tail_num) {
+                        for p in head_contour.into_iter().rev() {
+                            tail_contour.push_front(p);
+                        }
+                        if let Some(front_key) = old_head_front {
+                            starts.remove(&front_key);
+                        }
+                        if let Some(&first) = tail_contour.front() {
+                            starts.insert(first, tail_num);
+                        }
+                        if let Some(&last) = tail_contour.back() {
+                            ends.insert(last, tail_num);
+                        }
+                    }
+                }
+            }
+            (None, None) => {
+                let mut new_contour = VecDeque::new();
+                new_contour.push_back(from_point);
+                new_contour.push_back(to_point);
+                contours.insert(current_index, new_contour);
+                starts.insert(from_point, current_index);
+                ends.insert(to_point, current_index);
+                current_index += 1;
+            }
+            (Some(tail_num), None) => {
+                if let Some(tail_contour) = contours.get_mut(&tail_num) {
+                    tail_contour.push_front(from_point);
+                    starts.insert(from_point, tail_num);
+                }
+            }
+            (None, Some(head_num)) => {
+                if let Some(head_contour) = contours.get_mut(&head_num) {
+                    head_contour.push_back(to_point);
+                    ends.insert(to_point, head_num);
+                }
+            }
+        }
+    }
+
+    let mut ordered = contours.into_iter().collect::<Vec<_>>();
+    ordered.sort_by_key(|(idx, _)| *idx);
+    ordered
+        .into_iter()
+        .map(|(_, deque)| deque.into_iter().map(key_to_point).collect::<Vec<_>>())
+        .collect()
+}
+
+fn contour_segments_binary(mask: &ArrayView2<bool>) -> Vec<(ContourKey, ContourKey)> {
+    let (rows, cols) = mask.dim();
+    if rows < 2 || cols < 2 {
+        return Vec::new();
+    }
+
+    let mut segments = Vec::<(ContourKey, ContourKey)>::new();
+
+    for r0 in 0..(rows - 1) {
+        for c0 in 0..(cols - 1) {
+            let r1 = r0 + 1;
+            let c1 = c0 + 1;
+
+            let ul = if mask[[r0, c0]] { 1_u8 } else { 0_u8 };
+            let ur = if mask[[r0, c1]] { 1_u8 } else { 0_u8 };
+            let ll = if mask[[r1, c0]] { 1_u8 } else { 0_u8 };
+            let lr = if mask[[r1, c1]] { 1_u8 } else { 0_u8 };
+
+            // Matches skimage square_case encoding with level=0.5 and ">" comparison.
+            let square_case =
+                (ul > 0) as u8 + ((ur > 0) as u8) * 2 + ((ll > 0) as u8) * 4 + ((lr > 0) as u8) * 8;
+            if square_case == 0 || square_case == 15 {
+                continue;
+            }
+
+            // For binary values and level=0.5, edge intersections are always at midpoints.
+            let top = ((2 * r0) as i32, (2 * c0 + 1) as i32);
+            let bottom = ((2 * r1) as i32, (2 * c0 + 1) as i32);
+            let left = ((2 * r0 + 1) as i32, (2 * c0) as i32);
+            let right = ((2 * r0 + 1) as i32, (2 * c1) as i32);
+
+            let mut push_seg = |a: ContourKey, b: ContourKey| {
+                if a != b {
+                    segments.push((a, b));
+                }
+            };
+
+            // Match skimage with fully_connected='low' (vertex_connect_high = False).
+            match square_case {
+                1 => push_seg(top, left),
+                2 => push_seg(right, top),
+                3 => push_seg(right, left),
+                4 => push_seg(left, bottom),
+                5 => push_seg(top, bottom),
+                6 => {
+                    push_seg(right, top);
+                    push_seg(left, bottom);
+                }
+                7 => push_seg(right, bottom),
+                8 => push_seg(bottom, right),
+                9 => {
+                    push_seg(top, left);
+                    push_seg(bottom, right);
+                }
+                10 => push_seg(bottom, top),
+                11 => push_seg(bottom, left),
+                12 => push_seg(left, right),
+                13 => push_seg(top, right),
+                14 => push_seg(left, top),
+                _ => {}
+            }
+        }
+    }
+
+    segments
+}
+
+fn dedup_contour_points(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out: Vec<(f64, f64)> = Vec::with_capacity(points.len());
+    for &(x, y) in points {
+        let keep = out.last().map_or(true, |&(lx, ly)| {
+            (x - lx).abs() > 1e-12 || (y - ly).abs() > 1e-12
+        });
+        if keep {
+            out.push((x, y));
+        }
+    }
+
+    if out.len() > 1 {
+        let (fx, fy) = out[0];
+        let (lx, ly) = out[out.len() - 1];
+        if (fx - lx).abs() <= 1e-12 && (fy - ly).abs() <= 1e-12 {
+            out.pop();
+        }
+    }
+    out
 }
 
 fn interp_linear(x: &[f64], xp: &[f64], fp: &[f64]) -> Vec<f64> {

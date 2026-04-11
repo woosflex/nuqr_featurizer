@@ -221,8 +221,9 @@ fn test_glcm_two_distinct_values() {
 }
 
 #[test]
-fn test_glcm_energy_asm_relationship() {
-    // Energy = sqrt(ASM) by definition
+fn test_glcm_energy_matches_skimage_mean_angle_energy() {
+    // For multi-angle aggregation, reference Python computes:
+    // ASM = mean(ASM_angle), Energy = mean(sqrt(ASM_angle)).
     let patch = array![
         [50.0, 100.0, 150.0],
         [100.0, 150.0, 200.0],
@@ -235,12 +236,19 @@ fn test_glcm_energy_asm_relationship() {
     let asm = features.get("glcm_ASM").unwrap();
     let energy = features.get("glcm_energy").unwrap();
 
-    // Verify Energy = sqrt(ASM)
-    let expected_energy = asm.sqrt();
-    let diff = (energy - expected_energy).abs();
+    // Reference values from scikit-image graycoprops(...).mean() on this patch.
+    let expected_asm = 0.210_069_444_444_444_45_f64;
+    let expected_energy = 0.447_685_282_521_985_9_f64;
+
     assert!(
-        diff < 1e-6,
-        "Energy should equal sqrt(ASM): {} vs {}",
+        (asm - expected_asm).abs() < 1e-12,
+        "ASM should match scikit-image reference: {} vs {}",
+        asm,
+        expected_asm
+    );
+    assert!(
+        (energy - expected_energy).abs() < 1e-12,
+        "Energy should match scikit-image reference: {} vs {}",
         energy,
         expected_energy
     );

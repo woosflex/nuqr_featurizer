@@ -30,6 +30,23 @@ jobs:
         with:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ~/.cache/apt/archives
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Install system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p ~/.cache/apt/archives
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" update
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config libssl-dev build-essential gfortran libopenblas-dev liblapack-dev
       - name: Run Rust integration tests
         run: cargo test --tests
       - name: Build wheel for smoke test
@@ -75,6 +92,25 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+      - name: Cache build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pip
+            ~/.cache/sccache
+            target
+            ~/.cache/apt/archives
+          key: ${{ runner.os }}-build-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ matrix.platform.target }}-
+      - name: Install system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p ~/.cache/apt/archives
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" update
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config libssl-dev build-essential gfortran libopenblas-dev liblapack-dev
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -107,6 +143,25 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+      - name: Cache build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pip
+            ~/.cache/sccache
+            target
+            ~/.cache/apt/archives
+          key: ${{ runner.os }}-build-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ matrix.platform.target }}-
+      - name: Install system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p ~/.cache/apt/archives
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" update
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config libssl-dev build-essential gfortran libopenblas-dev liblapack-dev
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -141,6 +196,29 @@ jobs:
         with:
           python-version: 3.13
           architecture: ${{ matrix.platform.python_arch }}
+      - name: Cache build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pip
+            ~/.cache/sccache
+            target
+            C:\vcpkg
+            ~/AppData/Local/vcpkg/archives
+          key: ${{ runner.os }}-build-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ matrix.platform.target }}-
+      - name: Install vcpkg (Windows)
+        shell: powershell
+        run: |
+          if (!(Test-Path C:\vcpkg)) {
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+            & C:\vcpkg\bootstrap-vcpkg.bat
+          }
+      - name: Set VCPKG_ROOT
+        run: echo "VCPKG_ROOT=C:\\vcpkg" >> $GITHUB_ENV
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -168,6 +246,24 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: 3.x
+      - name: Cache build dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cache/pip
+            ~/.cache/sccache
+            target
+            ~/Library/Caches/Homebrew
+          key: ${{ runner.os }}-build-${{ matrix.platform.target }}-${{ hashFiles('**/Cargo.lock') }}-${{ hashFiles('**/pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ matrix.platform.target }}-
+      - name: Install Homebrew packages (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update || true
+          brew install pkg-config openssl || true
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

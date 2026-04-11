@@ -1,23 +1,12 @@
 //! PyO3 integration and NumPy zero-copy conversions
 
 use ndarray::{Array2, Array3, ArrayView2, ArrayView3};
-use numpy::{PyArray2, PyArray3};
-use pyo3::prelude::*;
 
 use crate::core::{FeaturizerError, Result};
 
 // NOTE: PyReadonlyArray conversions are used inline where needed
 // The lifetime of the ArrayView is tied to the PyReadonlyArray,
 // so we don't provide standalone conversion functions.
-
-/// Convert ndarray to NumPy array (returns owned array)
-pub fn array2_to_numpy<'py>(py: Python<'py>, arr: Array2<f64>) -> Bound<'py, PyArray2<f64>> {
-    PyArray2::from_owned_array_bound(py, arr)
-}
-
-pub fn array3_to_numpy<'py>(py: Python<'py>, arr: Array3<u8>) -> Bound<'py, PyArray3<u8>> {
-    PyArray3::from_owned_array_bound(py, arr)
-}
 
 /// Validate image dimensions
 pub fn validate_image_shape(shape: &[usize]) -> Result<()> {
@@ -56,12 +45,13 @@ pub fn rgb_to_grayscale(rgb: &ArrayView3<u8>) -> Array2<u8> {
 
     for i in 0..height {
         for j in 0..width {
-            let r = rgb[[i, j, 0]] as f32;
-            let g = rgb[[i, j, 1]] as f32;
-            let b = rgb[[i, j, 2]] as f32;
+            let r = rgb[[i, j, 0]] as u32;
+            let g = rgb[[i, j, 1]] as u32;
+            let b = rgb[[i, j, 2]] as u32;
 
-            // Standard grayscale conversion
-            let gray_val = (0.299 * r + 0.587 * g + 0.114 * b) as u8;
+            // Match OpenCV COLOR_RGB2GRAY fixed-point path exactly.
+            // Equivalent to round((0.299 * R + 0.587 * G + 0.114 * B)).
+            let gray_val = ((r * 19_596 + g * 38_470 + b * 7_470 + 32_768) >> 16) as u8;
             gray[[i, j]] = gray_val;
         }
     }

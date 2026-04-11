@@ -213,29 +213,24 @@ impl VahadaneStainNormalizer {
             });
         }
 
-        let mut w = if m == 3 && self.num_stains == 2 {
-            arr2(&REFERENCE_STAIN_MATRIX_V)
-        } else {
-            let mut tmp = Array2::<f32>::zeros((m, self.num_stains));
-            for i in 0..m {
-                for j in 0..self.num_stains {
-                    let raw = ((i + 1) * (j + 2)) as f32 / ((m + 1) * (self.num_stains + 1)) as f32;
-                    tmp[[i, j]] = raw.max(self.eps);
-                }
+        // Match Python reference initialization:
+        // W = np.random.rand(m, k) + eps ; H = np.random.rand(k, n) + eps
+        let mut rng = XorShift64::new(0x9E37_79B9_7F4A_7C15);
+        let mut w = Array2::<f32>::zeros((m, self.num_stains));
+        for i in 0..m {
+            for j in 0..self.num_stains {
+                w[[i, j]] = rng.next_f32() + self.eps;
             }
-            tmp
-        };
+        }
 
         normalize_w_columns(&mut w, self.eps);
 
-        let mut h = w.t().dot(v);
-        h.mapv_inplace(|x| {
-            if x.is_finite() {
-                x.max(self.eps)
-            } else {
-                self.eps
+        let mut h = Array2::<f32>::zeros((self.num_stains, n));
+        for i in 0..self.num_stains {
+            for j in 0..n {
+                h[[i, j]] = rng.next_f32() + self.eps;
             }
-        });
+        }
 
         Ok((w, h))
     }
@@ -370,6 +365,39 @@ fn normalize_w_columns(w: &mut Array2<f32>, eps: f32) {
         let norm = w.column(col).iter().map(|v| v * v).sum::<f32>().sqrt();
         let denom = norm + eps;
         w.column_mut(col).mapv_inplace(|x| x / denom);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct XorShift64 {
+    state: u64,
+}
+
+impl XorShift64 {
+    fn new(seed: u64) -> Self {
+        Self {
+            state: if seed == 0 {
+                0xA5A5_A5A5_A5A5_A5A5
+            } else {
+                seed
+            },
+        }
+    }
+
+    #[inline]
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.state = x;
+        x
+    }
+
+    #[inline]
+    fn next_f32(&mut self) -> f32 {
+        let v = (self.next_u64() >> 40) as u32; // 24 random bits
+        (v as f32) / ((1u32 << 24) as f32)
     }
 }
 

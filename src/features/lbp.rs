@@ -18,7 +18,7 @@
 use crate::core::error::{FeaturizerError, Result};
 use ndarray::{Array2, ArrayView2};
 use std::collections::HashMap;
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 
 /// Calculate LBP (Local Binary Pattern) features from grayscale patch.
 ///
@@ -51,22 +51,30 @@ pub fn calculate_lbp_features(
         });
     }
 
-    // Use full grayscale patch for interpolation and apply mask only when
-    // selecting output codes.
-    let mut img_for_lbp = Array2::<f32>::zeros(grayscale_patch.dim());
+    // Match Python reference: local_binary_pattern is run on (patch * mask).astype(uint8).
+    let mut img_for_lbp = Array2::<u8>::zeros(grayscale_patch.dim());
     for ((r, c), &val) in grayscale_patch.indexed_iter() {
-        img_for_lbp[[r, c]] = val.clamp(0.0, 255.0);
+        img_for_lbp[[r, c]] = if mask[[r, c]] {
+            val.clamp(0.0, 255.0) as u8
+        } else {
+            0
+        };
     }
 
     // Edge case: empty mask
     if !mask.iter().any(|&v| v) {
         return Ok(empty_features());
     }
+    // Match Python early-return: if not np.any(img_for_lbp)
+    if !img_for_lbp.iter().any(|&v| v > 0) {
+        return Ok(empty_features());
+    }
 
     // Compute LBP image with P=8, R=1, method='uniform'
     const P: usize = 8;
-    const R: f32 = 1.0;
-    let lbp_image = local_binary_pattern_uniform(&img_for_lbp.view(), P, R);
+    const R: f64 = 1.0;
+    let img_for_lbp_f64 = img_for_lbp.mapv(f64::from);
+    let lbp_image = local_binary_pattern_uniform(&img_for_lbp_f64.view(), P, R);
 
     // Extract values in masked region
     let mut lbp_values = Vec::new();
@@ -130,13 +138,13 @@ pub fn calculate_lbp_features(
 /// Port of `_local_binary_pattern` with method='U' (texture.pyx:87-270).
 ///
 /// # Arguments
-/// * `image` - Grayscale image (f32)
+/// * `image` - Grayscale image (f64)
 /// * `p` - Number of circularly symmetric neighbors (typically 8)
 /// * `r` - Radius of circle (typically 1.0)
 ///
 /// # Returns
 /// Array of LBP codes (usize values 0 to P+1 for method='uniform')
-fn local_binary_pattern_uniform(image: &ArrayView2<f32>, p: usize, r: f32) -> Array2<usize> {
+fn local_binary_pattern_uniform(image: &ArrayView2<f64>, p: usize, r: f64) -> Array2<usize> {
     let (rows, cols) = image.dim();
     let mut output = Array2::<usize>::zeros((rows, cols));
 
@@ -144,7 +152,7 @@ fn local_binary_pattern_uniform(image: &ArrayView2<f32>, p: usize, r: f32) -> Ar
     let mut rp = Vec::with_capacity(p);
     let mut cp = Vec::with_capacity(p);
     for i in 0..p {
-        let angle = 2.0 * PI * (i as f32) / (p as f32);
+        let angle = 2.0 * PI * (i as f64) / (p as f64);
         let rr = -r * angle.sin();
         let cc = r * angle.cos();
         // Match scikit-image's rounding to 5 decimals.
@@ -160,8 +168,8 @@ fn local_binary_pattern_uniform(image: &ArrayView2<f32>, p: usize, r: f32) -> Ar
             // Sample P neighbors with bilinear interpolation
             let mut signed_texture = Vec::with_capacity(p);
             for i in 0..p {
-                let nr = r as f32 + rp[i];
-                let nc = c as f32 + cp[i];
+                let nr = r as f64 + rp[i];
+                let nc = c as f64 + cp[i];
                 let neighbor = bilinear_interpolate(image, nr, nc);
                 signed_texture.push(if neighbor >= center { 1u8 } else { 0u8 });
             }
@@ -215,31 +223,33 @@ fn compute_uniform_lbp(signed_texture: &[u8], p: usize) -> usize {
 /// * `c` - Column coordinate (can be fractional)
 ///
 /// # Returns
-/// Interpolated value using clamped boundary coordinates.
-fn bilinear_interpolate(image: &ArrayView2<f32>, r: f32, c: f32) -> f32 {
+/// Interpolated value using constant-zero boundary handling (`mode='constant', cval=0`).
+fn bilinear_interpolate(image: &ArrayView2<f64>, r: f64, c: f64) -> f64 {
     let r0 = r.floor() as isize;
     let c0 = c.floor() as isize;
-    let r1 = r0 + 1;
-    let c1 = c0 + 1;
+    let r1 = r.ceil() as isize;
+    let c1 = c.ceil() as isize;
 
-    let dr = r - (r0 as f32);
-    let dc = c - (c0 as f32);
+    let dr = r - (r0 as f64);
+    let dc = c - (c0 as f64);
 
-    let v00 = sample_clamped(image, r0, c0);
-    let v01 = sample_clamped(image, r0, c1);
-    let v10 = sample_clamped(image, r1, c0);
-    let v11 = sample_clamped(image, r1, c1);
+    let v00 = sample_constant_zero(image, r0, c0);
+    let v01 = sample_constant_zero(image, r0, c1);
+    let v10 = sample_constant_zero(image, r1, c0);
+    let v11 = sample_constant_zero(image, r1, c1);
 
     let v0 = v00 * (1.0 - dc) + v01 * dc;
     let v1 = v10 * (1.0 - dc) + v11 * dc;
     v0 * (1.0 - dr) + v1 * dr
 }
 
-fn sample_clamped(image: &ArrayView2<f32>, r: isize, c: isize) -> f32 {
+fn sample_constant_zero(image: &ArrayView2<f64>, r: isize, c: isize) -> f64 {
     let (rows, cols) = image.dim();
-    let rr = r.clamp(0, rows as isize - 1);
-    let cc = c.clamp(0, cols as isize - 1);
-    image[[rr as usize, cc as usize]]
+    if r < 0 || c < 0 || r >= rows as isize || c >= cols as isize {
+        0.0
+    } else {
+        image[[r as usize, c as usize]]
+    }
 }
 
 /// Return empty feature dict (all zeros).

@@ -9,8 +9,8 @@ use std::collections::HashMap;
 
 use crate::core::{FeaturizerError, Result};
 
-const EPS: f32 = 1e-6;
-const LOG_ADJUST: f32 = -13.815_511; // ln(1e-6)
+const EPS_F32: f32 = 1e-6;
+const LOG_ADJUST: f64 = -13.815_510_557_964_274; // ln(1e-6)
 const HE_STAIN_MATRIX_FOR_FEATURES: [[f32; 2]; 3] = [
     [0.65, 0.07], // R contributions: H, E
     [0.70, 0.99], // G contributions: H, E
@@ -56,21 +56,23 @@ pub fn calculate_he_color_features(
                 continue;
             }
 
-            let r = (rgb_patch[[row, col, 0]] as f32 / 255.0).max(EPS);
-            let g = (rgb_patch[[row, col, 1]] as f32 / 255.0).max(EPS);
-            let b = (rgb_patch[[row, col, 2]] as f32 / 255.0).max(EPS);
+            // Match skimage separate_stains dtype flow:
+            // rgb float32 -> np.log(float32) -> divide by float64 log_adjust -> float64.
+            let r = (rgb_patch[[row, col, 0]] as f32 / 255.0).max(EPS_F32);
+            let g = (rgb_patch[[row, col, 1]] as f32 / 255.0).max(EPS_F32);
+            let b = (rgb_patch[[row, col, 2]] as f32 / 255.0).max(EPS_F32);
 
-            let od_r = r.ln() / LOG_ADJUST;
-            let od_g = g.ln() / LOG_ADJUST;
-            let od_b = b.ln() / LOG_ADJUST;
+            let od_r = (r.ln() as f64) / LOG_ADJUST;
+            let od_g = (g.ln() as f64) / LOG_ADJUST;
+            let od_b = (b.ln() as f64) / LOG_ADJUST;
 
-            let hema = (od_r * HE_STAIN_MATRIX_FOR_FEATURES[0][0]
-                + od_g * HE_STAIN_MATRIX_FOR_FEATURES[1][0]
-                + od_b * HE_STAIN_MATRIX_FOR_FEATURES[2][0])
+            let hema = (od_r * HE_STAIN_MATRIX_FOR_FEATURES[0][0] as f64
+                + od_g * HE_STAIN_MATRIX_FOR_FEATURES[1][0] as f64
+                + od_b * HE_STAIN_MATRIX_FOR_FEATURES[2][0] as f64)
                 .max(0.0);
-            let eosin = (od_r * HE_STAIN_MATRIX_FOR_FEATURES[0][1]
-                + od_g * HE_STAIN_MATRIX_FOR_FEATURES[1][1]
-                + od_b * HE_STAIN_MATRIX_FOR_FEATURES[2][1])
+            let eosin = (od_r * HE_STAIN_MATRIX_FOR_FEATURES[0][1] as f64
+                + od_g * HE_STAIN_MATRIX_FOR_FEATURES[1][1] as f64
+                + od_b * HE_STAIN_MATRIX_FOR_FEATURES[2][1] as f64)
                 .max(0.0);
 
             h_values.push(hema);
@@ -120,7 +122,7 @@ struct ChannelStats {
     max: f64,
 }
 
-fn channel_stats(values: &[f32]) -> ChannelStats {
+fn channel_stats(values: &[f64]) -> ChannelStats {
     if values.is_empty() {
         return ChannelStats {
             mean: 0.0,
@@ -133,18 +135,18 @@ fn channel_stats(values: &[f32]) -> ChannelStats {
     }
 
     let n = values.len() as f64;
-    let mean = values.iter().map(|&v| v as f64).sum::<f64>() / n;
+    let mean = values.iter().copied().sum::<f64>() / n;
     let min = values
         .iter()
-        .fold(f32::INFINITY, |acc, &v| if v < acc { v } else { acc }) as f64;
+        .fold(f64::INFINITY, |acc, &v| if v < acc { v } else { acc });
     let max = values
         .iter()
-        .fold(f32::NEG_INFINITY, |acc, &v| if v > acc { v } else { acc }) as f64;
+        .fold(f64::NEG_INFINITY, |acc, &v| if v > acc { v } else { acc });
 
     let m2 = values
         .iter()
         .map(|&v| {
-            let d = v as f64 - mean;
+            let d = v - mean;
             d * d
         })
         .sum::<f64>()
@@ -155,7 +157,7 @@ fn channel_stats(values: &[f32]) -> ChannelStats {
         let m3 = values
             .iter()
             .map(|&v| {
-                let z = (v as f64 - mean) / std;
+                let z = (v - mean) / std;
                 z * z * z
             })
             .sum::<f64>()
@@ -163,7 +165,7 @@ fn channel_stats(values: &[f32]) -> ChannelStats {
         let m4 = values
             .iter()
             .map(|&v| {
-                let z = (v as f64 - mean) / std;
+                let z = (v - mean) / std;
                 z * z * z * z
             })
             .sum::<f64>()

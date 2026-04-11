@@ -196,11 +196,7 @@ pub fn compute_glcm_wgpu(
     for angle in 0..NUM_ANGLES {
         let base = angle * LEVELS * LEVELS;
         let plane = &counts[base..base + LEVELS * LEVELS];
-        let plane_sum: u64 = plane
-            .iter()
-            .map(|&v| v as u64)
-            .sum::<u64>()
-            .saturating_sub(plane[0] as u64);
+        let plane_sum: u64 = plane.iter().map(|&v| v as u64).sum::<u64>();
         let inv_sum = if normed && plane_sum > 0 {
             1.0_f32 / plane_sum as f32
         } else {
@@ -210,7 +206,7 @@ pub fn compute_glcm_wgpu(
         for i in 0..LEVELS {
             for j in 0..LEVELS {
                 let idx = i * LEVELS + j;
-                let raw = if idx == 0 { 0.0 } else { plane[idx] as f32 };
+                let raw = plane[idx] as f32;
                 glcm[[i, j, 0, angle]] = if normed { raw * inv_sum } else { raw };
             }
         }

@@ -10,7 +10,7 @@
 use ndarray::{Array2, ArrayView2};
 use std::collections::HashMap;
 
-use crate::core::{FeaturizerError, Result};
+use crate::core::Result;
 
 /// Calculate raw image moments up to the specified order.
 ///

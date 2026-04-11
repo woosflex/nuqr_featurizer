@@ -8,8 +8,7 @@ use std::collections::HashMap;
 
 use image::{GrayImage, Luma};
 use imageproc::contours::{find_contours, BorderType, Contour};
-use imageproc::drawing::draw_polygon_mut;
-use imageproc::geometry::{contour_area, convex_hull};
+use imageproc::geometry::contour_area;
 use imageproc::point::Point;
 use ndarray::ArrayView2;
 use num_complex::Complex;
@@ -37,20 +36,13 @@ pub fn calculate_advanced_shape_features(mask: &ArrayView2<bool>) -> Result<Hash
     }
 
     let perimeter = crate::features::morphology::calculate_perimeter(mask);
-    let contour = largest_external_contour(mask);
-
-    // Convexity = convex_area / area
-    let convexity = if let Some(points) = contour.as_ref() {
-        let hull = convex_hull(points.clone());
-        let convex_area = convex_hull_pixel_area(&hull, mask.dim());
-        if convex_area.is_finite() && convex_area > 0.0 {
-            convex_area / area
-        } else {
-            0.0
-        }
-    } else {
-        0.0
-    };
+    // Match Python reference exactly: convexity = props.convex_area / props.area.
+    let convex_area = crate::features::morphology::calculate_morphological_features(mask)?
+        .into_iter()
+        .find(|(k, _)| k == "convex_area")
+        .map(|(_, v)| v)
+        .unwrap_or(0.0);
+    let convexity = if area > 0.0 { convex_area / area } else { 0.0 };
     features.insert("convexity".to_string(), finite_or_zero(convexity));
 
     // Fractal dimension = log(perimeter) / log(area)
@@ -116,10 +108,10 @@ pub fn calculate_fourier_descriptors(mask: &ArrayView2<bool>) -> Result<[f64; 5]
 /// Uses the same formula as Python `_calculate_curvature`:
 /// `kappa = |d2x*dy - dx*d2y| / (dx^2 + dy^2)^(3/2)`.
 pub fn calculate_bending_energy(mask: &ArrayView2<bool>) -> Result<f64> {
-    let Some(points) = largest_external_contour(mask) else {
+    let Some(points) = crate::features::neis::largest_skimage_like_contour(mask) else {
         return Ok(0.0);
     };
-    Ok(bending_energy_from_points(&points))
+    Ok(bending_energy_from_contour_xy(&points))
 }
 
 fn default_features() -> HashMap<String, f64> {
@@ -145,17 +137,6 @@ fn finite_or_zero(value: f64) -> f64 {
     } else {
         0.0
     }
-}
-
-fn convex_hull_pixel_area(hull: &[Point<i32>], dims: (usize, usize)) -> f64 {
-    if hull.len() < 3 {
-        return 0.0;
-    }
-
-    let (h, w) = dims;
-    let mut image = GrayImage::new(w as u32, h as u32);
-    draw_polygon_mut(&mut image, hull, Luma([255_u8]));
-    image.pixels().filter(|p| p.0[0] > 0).count() as f64
 }
 
 fn mask_to_padded_gray_image(mask: &ArrayView2<bool>) -> GrayImage {
@@ -216,18 +197,20 @@ pub(crate) fn largest_external_contour(mask: &ArrayView2<bool>) -> Option<Vec<Po
     })
 }
 
-fn dedup_consecutive_complex(points: Vec<Complex<f64>>) -> Vec<Complex<f64>> {
-    if points.is_empty() {
-        return points;
+fn dedup_consecutive_complex(points: &[Complex<f64>]) -> Vec<Complex<f64>> {
+    if points.len() <= 1 {
+        return points.to_vec();
     }
 
-    let mut out = Vec::with_capacity(points.len());
-    out.push(points[0]);
-    for p in points.into_iter().skip(1) {
-        let last = *out.last().expect("out is non-empty");
-        if (p - last).norm() > 1e-10 {
+    // Match Python's `np.diff(np.concatenate(([c0], c)))` filtering semantics:
+    // keep point i when point[i] != point[i-1], and never keep index 0.
+    let mut out = Vec::with_capacity(points.len().saturating_sub(1));
+    let mut prev = points[0];
+    for &p in points.iter().skip(1) {
+        if (p - prev).norm() > 1e-10 {
             out.push(p);
         }
+        prev = p;
     }
     out
 }
@@ -241,9 +224,11 @@ fn fourier_descriptors_from_points(points: &[Point<i32>]) -> [f64; 5] {
         .iter()
         .map(|p| Complex::new(p.x as f64, p.y as f64))
         .collect::<Vec<_>>();
-    complex = dedup_consecutive_complex(complex);
-    if complex.len() <= 10 {
-        return [0.0; 5];
+    if complex.len() > 10 {
+        let dedup = dedup_consecutive_complex(&complex);
+        if dedup.len() > 10 {
+            complex = dedup;
+        }
     }
 
     let mut planner = FftPlanner::<f64>::new();
@@ -290,13 +275,26 @@ fn gradient(values: &[f64]) -> Vec<f64> {
     }
 }
 
-fn bending_energy_from_points(points: &[Point<i32>]) -> f64 {
+fn bending_energy_from_contour_xy(points: &[(f64, f64)]) -> f64 {
     if points.len() <= 10 {
         return 0.0;
     }
 
-    let x = points.iter().map(|p| p.x as f64).collect::<Vec<_>>();
-    let y = points.iter().map(|p| p.y as f64).collect::<Vec<_>>();
+    let mut dedup = Vec::<(f64, f64)>::with_capacity(points.len());
+    for &(x, y) in points {
+        let keep = dedup
+            .last()
+            .map_or(true, |&(lx, ly)| (x - lx).abs() > 1e-12 || (y - ly).abs() > 1e-12);
+        if keep {
+            dedup.push((x, y));
+        }
+    }
+    if dedup.len() <= 10 {
+        return 0.0;
+    }
+
+    let x = dedup.iter().map(|&(x, _)| x).collect::<Vec<_>>();
+    let y = dedup.iter().map(|&(_, y)| y).collect::<Vec<_>>();
 
     let dx = gradient(&x);
     let dy = gradient(&y);
@@ -304,7 +302,7 @@ fn bending_energy_from_points(points: &[Point<i32>]) -> f64 {
     let d2y = gradient(&dy);
 
     let mut sum = 0.0;
-    for i in 0..points.len() {
+    for i in 0..dedup.len() {
         let denom = (dx[i] * dx[i] + dy[i] * dy[i]).powf(1.5).max(1e-10);
         let numer = (d2x[i] * dy[i] - dx[i] * d2y[i]).abs();
         let curvature = numer / denom;

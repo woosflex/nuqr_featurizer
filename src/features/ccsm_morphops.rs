@@ -3,8 +3,6 @@
 //! - binary_opening
 
 use image::{GrayImage, Luma};
-use imageproc::distance_transform::Norm;
-use imageproc::morphology::open;
 use imageproc::region_labelling::{connected_components, Connectivity};
 use ndarray::{Array2, ArrayView2};
 
@@ -55,12 +53,49 @@ pub fn binary_opening(mask: &ArrayView2<bool>) -> Result<Array2<bool>> {
         });
     }
 
-    let gray = bool_to_gray(mask);
-    let opened = open(&gray, Norm::L1, 1);
+    // Match skimage.binary_opening with default cross footprint and mode='ignore':
+    // - erosion treats outside image as True
+    // - dilation treats outside image as False
+    const OFFSETS: [(isize, isize); 5] = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)];
+
+    let mut eroded = Array2::<bool>::from_elem((h, w), false);
+    for y in 0..h {
+        for x in 0..w {
+            let mut keep = true;
+            for (dy, dx) in OFFSETS {
+                let ny = y as isize + dy;
+                let nx = x as isize + dx;
+                if ny < 0 || nx < 0 || ny >= h as isize || nx >= w as isize {
+                    // mode='ignore' for erosion: outside treated as True.
+                    continue;
+                }
+                if !mask[[ny as usize, nx as usize]] {
+                    keep = false;
+                    break;
+                }
+            }
+            eroded[[y, x]] = keep;
+        }
+    }
 
     let mut out = Array2::<bool>::from_elem((h, w), false);
-    for (x, y, p) in opened.enumerate_pixels() {
-        out[[y as usize, x as usize]] = p[0] > 0;
+    for y in 0..h {
+        for x in 0..w {
+            let mut on = false;
+            for (dy, dx) in OFFSETS {
+                let ny = y as isize + dy;
+                let nx = x as isize + dx;
+                if ny < 0 || nx < 0 || ny >= h as isize || nx >= w as isize {
+                    // mode='ignore' for dilation: outside treated as False.
+                    continue;
+                }
+                if eroded[[ny as usize, nx as usize]] {
+                    on = true;
+                    break;
+                }
+            }
+            out[[y, x]] = on;
+        }
     }
     Ok(out)
 }
