@@ -66,14 +66,14 @@ Dimension mismatches return structured errors from `FeaturizerError`.
 - CI workflow: `.github/workflows/CI.yml`
   - Runs Rust integration tests.
   - Builds wheel and runs Python smoke import checks.
-  - Builds matrix wheels/sdist and publishes on tagged releases.
+  - Builds matrix wheels/sdist and uploads assets to GitHub Releases on tags.
 - The Rust dependency graph for wheels is kept free of `native-tls`/`openssl-sys`
   to avoid OpenSSL toolchain issues in manylinux and musllinux builds.
 
 ### PyPI release trigger
 
-- Tag-based release publish is enabled in CI.
-- Manual publish is also available through `workflow_dispatch` with:
+- Tag pushes upload wheel/sdist artifacts to the corresponding GitHub Release.
+- PyPI publish is performed only through `workflow_dispatch` with:
   - `publish_to_pypi = true`
 - Publishing uses `UV_PUBLISH_TOKEN` from repository secrets.
 
