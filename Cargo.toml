@@ -57,6 +57,11 @@ approx = "0.5"
 [build-dependencies]
 # No build script needed with WGPU (shaders compiled at runtime)
 
+# `openblas-build` pulls `ureq` for source download. We pin a local patched copy
+# to force rustls and avoid native-tls/OpenSSL issues in manylinux/musllinux CI.
+[patch.crates-io]
+openblas-build = { path = "vendor/openblas-build" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"

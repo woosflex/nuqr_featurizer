@@ -54,6 +54,10 @@ print(features[0].keys())  # feature names
 - If `use_gpu=True` is requested but no compatible adapter is available, the call raises an error.
 - Internal feature kernels use CPU fallback paths where implemented.
 
+## TLS/CI portability note
+
+- Transitive HTTP downloads in the build graph are configured to use **rustls** (not native-tls/OpenSSL), so Linux manylinux/musllinux CI jobs do not require OpenSSL discovery for Rust crate builds.
+
 ## CUDA wheel status
 
 - No separate CUDA wheel variant is currently produced.

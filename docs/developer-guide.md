@@ -67,6 +67,9 @@ Dimension mismatches return structured errors from `FeaturizerError`.
   - Runs Rust integration tests.
   - Builds wheel and runs Python smoke import checks.
   - Builds matrix wheels/sdist and publishes on tagged releases.
+- The transitive OpenBLAS downloader path is patched to use `rustls` TLS in
+  `vendor/openblas-build` (wired via `[patch.crates-io]`), avoiding
+  `native-tls`/OpenSSL dependency failures in manylinux and musllinux builds.
 
 ### PyPI release trigger
 
