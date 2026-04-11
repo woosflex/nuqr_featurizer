@@ -46,7 +46,7 @@ jobs:
         run: |
           mkdir -p ~/.cache/apt/archives
           sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" update
-          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config build-essential gfortran libopenblas-dev liblapack-dev
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config build-essential
       - name: Run Rust integration tests
         run: cargo test --tests
       - name: Build wheel for smoke test
@@ -110,7 +110,7 @@ jobs:
         run: |
           mkdir -p ~/.cache/apt/archives
           sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" update
-          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config build-essential gfortran libopenblas-dev liblapack-dev
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config build-essential
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -161,7 +161,7 @@ jobs:
         run: |
           mkdir -p ~/.cache/apt/archives
           sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" update
-          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config build-essential gfortran libopenblas-dev liblapack-dev
+          sudo apt-get -o Dir::Cache::archives="$HOME/.cache/apt/archives" install -y pkg-config build-essential
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:

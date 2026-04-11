@@ -56,7 +56,8 @@ print(features[0].keys())  # feature names
 
 ## TLS/CI portability note
 
-- Transitive HTTP downloads in the build graph are configured to use **rustls** (not native-tls/OpenSSL), so Linux manylinux/musllinux CI jobs do not require OpenSSL discovery for Rust crate builds.
+- The crate dependency graph used for wheel builds avoids `native-tls`/`openssl-sys`,
+  so Linux manylinux/musllinux jobs do not depend on OpenSSL discovery during Cargo builds.
 
 ## CUDA wheel status
 
