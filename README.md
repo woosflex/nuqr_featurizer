@@ -23,6 +23,10 @@ maturin build --release --out dist --interpreter python
 python -m pip install --force-reinstall --no-deps dist/nuqr_featurizer-*.whl
 ```
 
+If you import from the source tree (for example, `PYTHONPATH=python`), rebuild the
+extension after Rust changes so `python/nuqr_featurizer/_core.abi3.so` is current.
+A stale local extension can cause parity regressions unrelated to source code.
+
 ## Quick start
 
 ```python
@@ -110,6 +114,10 @@ python scripts/compare_with_python_features.py \
   --details-csv /tmp/compare_details.csv \
   --feature-summary-csv /tmp/compare_feature_summary.csv
 ```
+
+API mode for comparison:
+- `--extractor-api direct` (default): use `extract_features(image, instance_map)`
+- `--extractor-api files`: use `extract_features_from_files(image_path, mat_path)`
 
 Common controls:
 - `--image sample1 --image sample2` to run selected images only

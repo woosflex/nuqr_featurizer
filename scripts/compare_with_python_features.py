@@ -4,7 +4,7 @@ Compare Rust nuqr_featurizer output against pre-generated Python feature CSVs.
 
 This script does NOT run the original Python pipeline. It only:
 1) loads image + instance-map (.mat),
-2) runs nuqr_featurizer.extract_features(...),
+2) runs nuqr_featurizer extraction (direct array API or file-based API),
 3) compares to existing feature CSV rows.
 """
 
@@ -80,6 +80,7 @@ class ImageComparisonResult:
     image_path: Path
     mat_path: Path
     reference_path: Path
+    extractor_api: str
     match_method: str
     rust_nuclei: int
     reference_rows: int
@@ -205,6 +206,16 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=False,
         help="Use GPU for Rust extraction (default: false)",
+    )
+    parser.add_argument(
+        "--extractor-api",
+        choices=("direct", "files"),
+        default="direct",
+        help=(
+            "Rust API mode for extraction: "
+            "'direct' calls extract_features(image, instance_map), "
+            "'files' calls extract_features_from_files(image_path, mat_path)"
+        ),
     )
     parser.add_argument(
         "--abs-tol",
@@ -389,8 +400,45 @@ def detect_id_column(raw_rows: Sequence[Dict[str, str]], explicit: Optional[str]
     return None
 
 
-def rust_extract_features(image: np.ndarray, instance_map: np.ndarray, use_gpu: bool) -> List[Dict[str, float]]:
+def rust_extract_features(
+    image: np.ndarray,
+    instance_map: np.ndarray,
+    use_gpu: bool,
+    extractor_api: str,
+    image_path: Optional[Path] = None,
+    mat_path: Optional[Path] = None,
+    mat_key: Optional[str] = None,
+) -> List[Dict[str, float]]:
     nf = get_nuqr_module()
+    rows: List[Dict[str, float]] = []
+
+    if extractor_api == "files":
+        if image_path is None or mat_path is None:
+            raise RuntimeError("image_path and mat_path are required for extractor_api='files'")
+        if not hasattr(nf, "extract_features_from_files"):
+            raise RuntimeError(
+                "nuqr_featurizer.extract_features_from_files is unavailable; install an updated package."
+            )
+        rust_features = nf.extract_features_from_files(
+            str(image_path),
+            str(mat_path),
+            mat_key=mat_key,
+            use_gpu=use_gpu,
+        )
+        for idx, features in enumerate(rust_features):
+            nucleus_id = features.get("nucleus_id")
+            if nucleus_id is None or not math.isfinite(float(nucleus_id)):
+                raise RuntimeError(
+                    f"missing/invalid nucleus_id in file API output at row {idx}"
+                )
+            row = {"instance_id": float(int(round(float(nucleus_id))))}
+            for key, value in features.items():
+                if isinstance(value, (int, float)) and math.isfinite(float(value)):
+                    row[key] = float(value)
+            rows.append(row)
+        rows.sort(key=lambda row: row["instance_id"])
+        return rows
+
     rust_features = nf.extract_features(image, instance_map.astype(np.uint32), use_gpu=use_gpu)
     labels = sorted(int(v) for v in np.unique(instance_map) if int(v) != 0)
     if len(labels) != len(rust_features):
@@ -398,13 +446,13 @@ def rust_extract_features(image: np.ndarray, instance_map: np.ndarray, use_gpu: 
             f"label/feature length mismatch: labels={len(labels)}, features={len(rust_features)}"
         )
 
-    rows: List[Dict[str, float]] = []
     for label, features in zip(labels, rust_features):
         row = {"instance_id": float(label)}
         for key, value in features.items():
             if isinstance(value, (int, float)) and math.isfinite(float(value)):
                 row[key] = float(value)
         rows.append(row)
+    rows.sort(key=lambda row: row["instance_id"])
     return rows
 
 
@@ -780,7 +828,15 @@ def main() -> int:
             )
             continue
 
-        rust_rows = rust_extract_features(image, instance_map, use_gpu=args.use_gpu)
+        rust_rows = rust_extract_features(
+            image=image,
+            instance_map=instance_map,
+            use_gpu=args.use_gpu,
+            extractor_api=args.extractor_api,
+            image_path=img_path,
+            mat_path=mat_path,
+            mat_key=args.mat_key,
+        )
         raw_ref_rows, numeric_ref_rows = load_reference_rows(ref_path)
 
         id_col = detect_id_column(raw_ref_rows, args.id_column)
@@ -836,6 +892,7 @@ def main() -> int:
             row["reference_csv"] = str(ref_path)
             row["match_method"] = match_method
             row["mat_key"] = used_mat_key
+            row["extractor_api"] = args.extractor_api
         detail_rows.extend(details)
         for row in feature_rows:
             row["image"] = str(img_path)
@@ -843,12 +900,14 @@ def main() -> int:
             row["reference_csv"] = str(ref_path)
             row["match_method"] = match_method
             row["mat_key"] = used_mat_key
+            row["extractor_api"] = args.extractor_api
         feature_summary_rows.extend(feature_rows)
 
         result = ImageComparisonResult(
             image_path=img_path,
             mat_path=mat_path,
             reference_path=ref_path,
+            extractor_api=args.extractor_api,
             match_method=match_method,
             rust_nuclei=len(rust_rows),
             reference_rows=len(numeric_ref_rows),
@@ -874,6 +933,7 @@ def main() -> int:
                 "mat": str(mat_path),
                 "reference_csv": str(ref_path),
                 "mat_key": used_mat_key,
+                "extractor_api": args.extractor_api,
                 "match_method": match_method,
                 "rust_nuclei": len(rust_rows),
                 "reference_rows": len(numeric_ref_rows),
@@ -895,7 +955,7 @@ def main() -> int:
 
         if args.verbose:
             print(
-                f"[ok] {img_path.name}: match={match_method}, "
+                f"[ok] {img_path.name}: api={args.extractor_api}, match={match_method}, "
                 f"pairs={len(pairs)}, features={len(features)}, "
                 f"mae={mae:.6g}, max_abs={max_abs:.6g}, "
                 f"pass_rate={pass_rate:.2%}, mean_pearson={mean_pearson:.6g}"

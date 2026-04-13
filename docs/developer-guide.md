@@ -21,6 +21,10 @@ maturin build --release --out dist --interpreter python
 python -m pip install --force-reinstall --no-deps dist/nuqr_featurizer-*.whl
 ```
 
+When running from the source tree (`PYTHONPATH=python`), keep
+`python/nuqr_featurizer/_core.abi3.so` synchronized with Rust source changes.
+If this binary is stale, parity checks can regress even when Python wrappers are correct.
+
 If you use the project micromamba environment:
 
 ```bash
@@ -65,6 +69,11 @@ Dimension mismatches return structured errors from `FeaturizerError`.
 - Inputs: `image_path`, `mat_path`, optional `mat_key`, optional `use_gpu`
 - Behavior: loads files via `python/nuqr_featurizer/io.py`, validates shape compatibility, then delegates to `extract_features`
 - Dependency note: requires optional Python dependencies (`Pillow`, `scipy`) via `pip install "nuqr-featurizer[io]"`
+
+Comparison script API mode:
+
+- `scripts/compare_with_python_features.py --extractor-api direct` uses the direct array API.
+- `scripts/compare_with_python_features.py --extractor-api files` exercises the file-based convenience API.
 
 ## Packaging and CI
 
