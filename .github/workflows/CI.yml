@@ -62,6 +62,7 @@ jobs:
           import nuqr_featurizer as n
           assert hasattr(n, "__version__")
           assert hasattr(n, "extract_features")
+          assert hasattr(n, "extract_features_from_files")
           assert hasattr(n, "check_gpu")
           assert hasattr(n, "get_gpu_device_count")
           n.get_gpu_device_count()

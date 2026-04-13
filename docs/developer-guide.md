@@ -60,6 +60,12 @@ cargo bench --bench benchmark_suite
 
 Dimension mismatches return structured errors from `FeaturizerError`.
 
+`extract_features_from_files` is the convenience path:
+
+- Inputs: `image_path`, `mat_path`, optional `mat_key`, optional `use_gpu`
+- Behavior: loads files via `python/nuqr_featurizer/io.py`, validates shape compatibility, then delegates to `extract_features`
+- Dependency note: requires optional Python dependencies (`Pillow`, `scipy`) via `pip install "nuqr-featurizer[io]"`
+
 ## Packaging and CI
 
 - Packaging is configured in `pyproject.toml` using maturin.

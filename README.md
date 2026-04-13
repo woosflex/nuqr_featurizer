@@ -10,6 +10,12 @@
 pip install nuqr-featurizer
 ```
 
+### File-based convenience API (optional dependencies)
+
+```bash
+pip install "nuqr-featurizer[io]"
+```
+
 ### Local development build
 
 ```bash
@@ -36,6 +42,19 @@ print(len(features))       # number of nuclei
 print(features[0].keys())  # feature names
 ```
 
+Convenience call when you already have files:
+
+```python
+import nuqr_featurizer as nf
+
+features = nf.extract_features_from_files(
+    "/path/to/tile.png",
+    "/path/to/tile.mat",
+    mat_key=None,  # auto-detect key if omitted
+    use_gpu=False,
+)
+```
+
 ## Python API
 
 - `check_gpu() -> bool`: returns whether a compatible WGPU adapter is available.
@@ -47,6 +66,9 @@ print(features[0].keys())  # feature names
     - sequence of `np.ndarray[bool]` masks each with shape `(H, W)`
   - output includes morphology + Hu + advanced shape + NEIS + spatial distance and
     pre/post normalization feature groups (intensity, GLCM, LBP, H&E color, HOG, CCSM).
+- `extract_features_from_files(image_path, mat_path, mat_key=None, use_gpu=None) -> list[dict[str, float]]`:
+  - loads RGB image + instance map internally and then runs the same extraction pipeline.
+  - keeps `extract_features(...)` available for power users with custom loaders/layouts.
 
 ## GPU behavior
 

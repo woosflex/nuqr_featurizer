@@ -22,24 +22,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-try:
-    from PIL import Image
-except ImportError as exc:  # pragma: no cover
-    raise SystemExit("Pillow is required (pip install pillow).") from exc
-
-_LOADMAT = None
 _NF = None
+_IO = None
 
 
 DEFAULT_IMAGE_EXTS = [".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"]
-DEFAULT_MAT_KEYS = [
-    "instance_map",
-    "inst_map",
-    "instances",
-    "labels",
-    "segmentation",
-    "mask",
-]
 DEFAULT_ID_COLUMNS = [
     "nucleus_id",
     "instance_id",
@@ -54,17 +41,6 @@ DEFAULT_REFERENCE_EXCLUDE_COLUMNS = {
 }
 
 
-def get_loadmat():
-    global _LOADMAT
-    if _LOADMAT is None:
-        try:
-            from scipy.io import loadmat as scipy_loadmat
-        except ImportError as exc:  # pragma: no cover
-            raise SystemExit("scipy is required to read .mat files (pip install scipy).") from exc
-        _LOADMAT = scipy_loadmat
-    return _LOADMAT
-
-
 def get_nuqr_module():
     global _NF
     if _NF is None:
@@ -76,6 +52,19 @@ def get_nuqr_module():
             ) from exc
         _NF = nf
     return _NF
+
+
+def get_io_module():
+    global _IO
+    if _IO is None:
+        try:
+            import nuqr_featurizer.io as io_mod
+        except ImportError as exc:  # pragma: no cover
+            raise SystemExit(
+                "nuqr_featurizer.io is not importable. Install or upgrade the nuqr_featurizer wheel."
+            ) from exc
+        _IO = io_mod
+    return _IO
 
 
 @dataclass
@@ -331,73 +320,17 @@ def apply_image_selectors(images: Sequence[Path], selectors: Sequence[str]) -> L
 
 
 def load_rgb_image(path: Path) -> np.ndarray:
-    img = Image.open(path).convert("RGB")
-    arr = np.asarray(img, dtype=np.uint8)
-    if arr.ndim != 3 or arr.shape[2] != 3:
-        raise ValueError(f"Expected RGB image at {path}, got shape {arr.shape}")
-    return arr
-
-
-def _coerce_instance_map(arr: np.ndarray) -> Optional[np.ndarray]:
-    if not isinstance(arr, np.ndarray) or arr.ndim != 2:
-        return None
-    if not np.issubdtype(arr.dtype, np.number) and arr.dtype != np.bool_:
-        return None
-    out = np.asarray(arr)
-    if out.dtype == np.bool_:
-        out = out.astype(np.uint32)
-    elif np.issubdtype(out.dtype, np.floating):
-        if not np.all(np.isfinite(out)):
-            return None
-        rounded = np.rint(out)
-        if not np.allclose(out, rounded, atol=1e-6, rtol=0.0):
-            return None
-        out = rounded.astype(np.int64)
-    else:
-        out = out.astype(np.int64)
-
-    if out.min() < 0:
-        return None
-
-    return out.astype(np.uint32)
+    try:
+        return get_io_module().load_rgb_image(path)
+    except ImportError as exc:  # pragma: no cover
+        raise SystemExit(str(exc)) from exc
 
 
 def load_instance_map(mat_path: Path, preferred_key: Optional[str]) -> Tuple[np.ndarray, str]:
-    data = get_loadmat()(mat_path)
-
-    if preferred_key:
-        if preferred_key not in data:
-            raise KeyError(f"Key '{preferred_key}' not found in {mat_path}")
-        coerced = _coerce_instance_map(data[preferred_key])
-        if coerced is None:
-            raise ValueError(f"Key '{preferred_key}' is not a valid 2D instance map.")
-        return coerced, preferred_key
-
-    for key in DEFAULT_MAT_KEYS:
-        if key in data:
-            coerced = _coerce_instance_map(data[key])
-            if coerced is not None:
-                return coerced, key
-
-    best_key: Optional[str] = None
-    best_map: Optional[np.ndarray] = None
-    best_score = -1
-    for key, value in data.items():
-        if key.startswith("__"):
-            continue
-        coerced = _coerce_instance_map(value)
-        if coerced is None:
-            continue
-        unique_count = int(np.unique(coerced).size)
-        score = unique_count
-        if score > best_score:
-            best_score = score
-            best_key = key
-            best_map = coerced
-
-    if best_map is None or best_key is None:
-        raise ValueError(f"No valid 2D instance map found in {mat_path}")
-    return best_map, best_key
+    try:
+        return get_io_module().load_instance_map(mat_path, preferred_key=preferred_key)
+    except ImportError as exc:  # pragma: no cover
+        raise SystemExit(str(exc)) from exc
 
 
 def parse_float(value: str) -> Optional[float]:
