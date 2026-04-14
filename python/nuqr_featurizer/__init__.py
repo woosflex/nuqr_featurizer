@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Optional, Union
 
 from ._core import __version__, check_gpu, extract_features, get_gpu_device_count
-from .io import load_instance_map, load_rgb_image
 
 PathInput = Union[str, PathLike[str], Path]
 
@@ -17,6 +16,8 @@ def extract_features_from_files(
     mat_key: Optional[str] = None,
     use_gpu: Optional[bool] = None,
 ) -> list[dict[str, float]]:
+    from .io import load_instance_map, load_rgb_image
+
     image = load_rgb_image(image_path)
     instance_map, _ = load_instance_map(mat_path, preferred_key=mat_key)
     if instance_map.shape != image.shape[:2]:
