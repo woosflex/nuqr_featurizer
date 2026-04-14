@@ -93,9 +93,21 @@ Comparison script API mode:
 ### PyPI release trigger
 
 - Tag pushes upload wheel/sdist artifacts to the corresponding GitHub Release.
-- PyPI publish is performed only through `workflow_dispatch` with:
+- TestPyPI publish is performed through `workflow_dispatch` with:
+  - `publish_to_testpypi = true`
+  - Uses repository secret: `TEST_PYPI_API_TOKEN`
+- PyPI publish is performed through `workflow_dispatch` with:
   - `publish_to_pypi = true`
-- Publishing uses `UV_PUBLISH_TOKEN` from repository secrets.
+  - Uses repository secret: `PYPI_API_TOKEN`
+
+TestPyPI install command for collaborators:
+
+```bash
+python -m pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple \
+  nuqr-featurizer
+```
 
 ## GPU notes
 

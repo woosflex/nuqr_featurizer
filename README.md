@@ -14,6 +14,24 @@ This package is **dependency-light**, not dependency-free:
 pip install nuqr-featurizer
 ```
 
+### From TestPyPI (pre-release sharing)
+
+```bash
+python -m pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple \
+  nuqr-featurizer
+```
+
+For file-based API dependencies from TestPyPI:
+
+```bash
+python -m pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --extra-index-url https://pypi.org/simple \
+  "nuqr-featurizer[io]"
+```
+
 ### From a local wheel file
 
 ```bash
