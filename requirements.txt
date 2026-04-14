@@ -1,0 +1,6 @@
+# Core runtime dependency
+numpy>=1.19
+
+# Required for file-based convenience API: extract_features_from_files(...)
+pillow>=10.0
+scipy>=1.7

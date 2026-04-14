@@ -2,6 +2,10 @@
 
 This guide describes how to work on the Rust/PyO3 codebase and ship wheels reliably.
 
+Dependency model:
+- Required runtime dependency: `numpy`
+- Optional file-I/O API dependency set: `pillow` + `scipy`
+
 ## Architecture summary
 
 - `src/lib.rs`: PyO3 module entrypoint and Python API wiring.
@@ -18,7 +22,8 @@ This guide describes how to work on the Rust/PyO3 codebase and ship wheels relia
 
 ```bash
 maturin build --release --out dist --interpreter python
-python -m pip install --force-reinstall --no-deps dist/nuqr_featurizer-*.whl
+python -m pip install -r requirements.txt
+python -m pip install --force-reinstall dist/nuqr_featurizer-*.whl
 ```
 
 When running from the source tree (`PYTHONPATH=python`), keep

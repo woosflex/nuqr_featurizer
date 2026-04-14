@@ -2,12 +2,23 @@
 
 `nuqr-featurizer` is a Rust + PyO3 package for high-throughput nucleus feature extraction with optional GPU acceleration through WGPU.
 
+This package is **dependency-light**, not dependency-free:
+- required runtime dependency: `numpy`
+- optional file-I/O dependencies: `pillow`, `scipy` (for `extract_features_from_files`)
+
 ## Installation
 
 ### From wheel (recommended)
 
 ```bash
 pip install nuqr-featurizer
+```
+
+### From a local wheel file
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install /path/to/nuqr_featurizer-0.1.0-*.whl
 ```
 
 ### File-based convenience API (optional dependencies)
