@@ -13,7 +13,7 @@ on:
     inputs:
       publish_to_testpypi:
         description: "Publish built artifacts to TestPyPI"
-        required: false
+        required: true
         default: false
         type: boolean
       publish_to_pypi:
