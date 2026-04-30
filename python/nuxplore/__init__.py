@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nuxplore import (
+from ._core import (
     __version__,
     check_gpu,
     extract_features,

@@ -3,13 +3,13 @@ requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "nuqr-featurizer"
+name = "nuxplore"
 version = "0.1.0"
 description = "High-performance histopathology feature extraction with GPU acceleration"
 readme = "README.md"
 requires-python = ">=3.8"
 authors = [
-    {name = "NuQR Team"}
+    {name = "NuXplore Team"}
 ]
 classifiers = [
     "Programming Language :: Rust",
@@ -23,16 +23,12 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
-dependencies = [
-    "numpy>=1.19",
-]
+dependencies = []
 
 [project.optional-dependencies]
-io = [
-    "pillow>=10.0",
-    "scipy>=1.7",
-]
+array = ["numpy>=1.19"]
 dev = [
+    "numpy>=1.19",
     "pytest>=7.0",
     "pytest-benchmark>=4.0",
     "pillow>=10.0",
@@ -42,5 +38,5 @@ dev = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
-module-name = "nuqr_featurizer._core"
+module-name = "nuxplore._core"
 python-source = "python"

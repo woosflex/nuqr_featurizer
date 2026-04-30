@@ -1,6 +1,7 @@
-# Core runtime dependency
+# Development and validation dependencies.
+# Runtime file API no longer requires Python numpy/pillow/scipy.
 numpy>=1.19
-
-# Required for file-based convenience API: extract_features_from_files(...)
 pillow>=10.0
 scipy>=1.7
+pytest>=7.0
+pytest-benchmark>=4.0

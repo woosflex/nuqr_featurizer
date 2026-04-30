@@ -1437,7 +1437,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nuqr_featurizer"
+name = "nuxplore"
 version = "0.1.0"
 dependencies = [
  "anyhow",

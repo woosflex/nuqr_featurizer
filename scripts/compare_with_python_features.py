@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Compare Rust nuqr_featurizer output against pre-generated Python feature CSVs.
+Compare Rust nuxplore output against pre-generated Python feature CSVs.
 
 This script does NOT run the original Python pipeline. It only:
 1) loads image + instance-map (.mat),
-2) runs nuqr_featurizer extraction (direct array API or file-based API),
+2) runs nuxplore extraction (direct array API or file-based API),
 3) compares to existing feature CSV rows.
 """
 
@@ -39,16 +39,19 @@ DEFAULT_REFERENCE_EXCLUDE_COLUMNS = {
     "Confidence_Score",
     "nucleus_type",
 }
+PERIODIC_FEATURE_PERIODS = {
+    "orientation": math.pi,
+}
 
 
-def get_nuqr_module():
+def get_nuxplore_module():
     global _NF
     if _NF is None:
         try:
-            import nuqr_featurizer as nf
+            import nuxplore as nf
         except ImportError as exc:  # pragma: no cover
             raise SystemExit(
-                "nuqr_featurizer is not importable. Install the wheel/env first."
+                "nuxplore is not importable. Install the wheel/env first."
             ) from exc
         _NF = nf
     return _NF
@@ -58,10 +61,10 @@ def get_io_module():
     global _IO
     if _IO is None:
         try:
-            import nuqr_featurizer.io as io_mod
+            import nuxplore.io as io_mod
         except ImportError as exc:  # pragma: no cover
             raise SystemExit(
-                "nuqr_featurizer.io is not importable. Install or upgrade the nuqr_featurizer wheel."
+                "nuxplore.io is not importable. Install or upgrade the nuxplore wheel."
             ) from exc
         _IO = io_mod
     return _IO
@@ -409,7 +412,7 @@ def rust_extract_features(
     mat_path: Optional[Path] = None,
     mat_key: Optional[str] = None,
 ) -> List[Dict[str, float]]:
-    nf = get_nuqr_module()
+    nf = get_nuxplore_module()
     rows: List[Dict[str, float]] = []
 
     if extractor_api == "files":
@@ -417,7 +420,7 @@ def rust_extract_features(
             raise RuntimeError("image_path and mat_path are required for extractor_api='files'")
         if not hasattr(nf, "extract_features_from_files"):
             raise RuntimeError(
-                "nuqr_featurizer.extract_features_from_files is unavailable; install an updated package."
+                "nuxplore.extract_features_from_files is unavailable; install an updated package."
             )
         rust_features = nf.extract_features_from_files(
             str(image_path),
@@ -660,17 +663,18 @@ def compare_pairs(
             ref_val = pair.reference_row.get(feat)
             if rust_val is None or ref_val is None:
                 continue
-            diff = float(rust_val - ref_val)
+            rust_cmp = align_periodic_value(feat, float(rust_val), float(ref_val))
+            diff = float(rust_cmp - ref_val)
             abs_diff = abs(diff)
-            rel_diff = abs_diff / max(abs(rust_val), abs(ref_val), 1e-12)
-            tol = abs_tol + rel_tol * max(abs(rust_val), abs(ref_val))
+            rel_diff = abs_diff / max(abs(rust_cmp), abs(ref_val), 1e-12)
+            tol = abs_tol + rel_tol * max(abs(rust_cmp), abs(ref_val))
             ok = abs_diff <= tol
             details.append(
                 {
                     "instance_id": rid,
                     "reference_row_index": pair.reference_index,
                     "feature": feat,
-                    "rust_value": rust_val,
+                    "rust_value": rust_cmp,
                     "reference_value": ref_val,
                     "abs_diff": abs_diff,
                     "rel_diff": rel_diff,
@@ -688,6 +692,15 @@ def compare_pairs(
     max_abs = float(np.max(abs_diffs))
     pass_rate = passed / total
     return details, total, mae, max_abs, pass_rate
+
+
+def align_periodic_value(feature: str, rust_value: float, reference_value: float) -> float:
+    period = PERIODIC_FEATURE_PERIODS.get(feature)
+    if period is None or period <= 0.0:
+        return rust_value
+    delta = rust_value - reference_value
+    wrapped_delta = ((delta + 0.5 * period) % period) - 0.5 * period
+    return reference_value + wrapped_delta
 
 
 def write_csv(path: Path, rows: Sequence[Dict[str, object]]) -> None:

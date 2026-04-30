@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use ndarray::Array2;
-use nuqr_featurizer::features::extract_morphology_batch;
+use nuxplore::features::extract_morphology_batch;
 
 fn generate_masks(mask_count: usize, side: usize) -> Vec<Array2<bool>> {
     let mut masks = Vec::with_capacity(mask_count);

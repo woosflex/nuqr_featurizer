@@ -1,13 +1,13 @@
 [package]
-name = "nuqr_featurizer"
+name = "nuxplore"
 version = "0.1.0"
 edition = "2021"
-authors = ["NuQR Team"]
+authors = ["NuXplore Team"]
 description = "High-performance histopathology feature extraction library"
 license = "MIT"
 
 [lib]
-name = "nuqr_featurizer"
+name = "nuxplore"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

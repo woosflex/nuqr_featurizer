@@ -63,7 +63,7 @@ impl GpuBackend {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: Some("NuQR Featurizer GPU Device"),
+                    label: Some("NuXplore GPU Device"),
                     required_features: wgpu::Features::empty(),
                     required_limits: wgpu::Limits::default(),
                 },
@@ -122,7 +122,7 @@ pub fn gpu_profiling_enabled() -> bool {
 pub fn log_gpu_profile(kernel: &str, stage: &str, elapsed: Duration) {
     if gpu_profiling_enabled() {
         tracing::info!(
-            target: "nuqr_gpu_profile",
+            target: "nuxplore_gpu_profile",
             kernel = kernel,
             stage = stage,
             elapsed_ms = elapsed.as_secs_f64() * 1000.0

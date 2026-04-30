@@ -1,139 +1,181 @@
-# nuqr-featurizer
+# NuXplore
 
-`nuqr-featurizer` is a Rust + PyO3 package for high-throughput nucleus feature extraction with optional GPU acceleration through WGPU.
+`NuXplore` is a Rust + PyO3 Python package for high-throughput histopathology nucleus feature extraction.
 
-This package is **dependency-light**, not dependency-free:
-- required runtime dependency: `numpy`
-- optional file-I/O dependencies: `pillow`, `scipy` (for `extract_features_from_files`)
+It provides two primary input paths:
+
+- `extract_features_from_files(...)`: preferred path for image + `.mat` files. Image and MAT loading happen in Rust and do not require Python `numpy`, `pillow`, or `scipy`.
+- `extract_features(...)`: NumPy array path for in-memory pipelines. Install the optional `array` extra when using this API from a fresh environment.
+
+The package uses WGPU for optional cross-platform GPU acceleration. No separate CUDA wheel is currently produced.
 
 ## Installation
 
-### From wheel (recommended)
+### Runtime wheel
 
 ```bash
-pip install nuqr-featurizer
+python -m pip install nuxplore
 ```
 
-### From TestPyPI (pre-release sharing)
+This is enough for dependency-free file input:
+
+```python
+import nuxplore as nf
+
+features = nf.extract_features_from_files(
+    "/path/to/tile.png",
+    "/path/to/tile.mat",
+    mat_key=None,
+    use_gpu=False,
+)
+```
+
+### Runtime wheel with NumPy array API
+
+```bash
+python -m pip install "nuxplore[array]"
+```
+
+Use this when calling `extract_features(image, masks, ...)` with NumPy arrays.
+
+### TestPyPI pre-release
 
 ```bash
 python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple \
-  nuqr-featurizer
+  nuxplore
 ```
 
-For file-based API dependencies from TestPyPI:
+With the array API extra:
 
 ```bash
 python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple \
-  "nuqr-featurizer[io]"
+  "nuxplore[array]"
 ```
 
-### From a local wheel file
+### Local wheel
+
+```bash
+python -m pip install /path/to/nuxplore-0.1.0-*.whl
+```
+
+Add development dependencies only when running scripts, tests, notebooks, or parity comparisons:
 
 ```bash
 python -m pip install -r requirements.txt
-python -m pip install /path/to/nuqr_featurizer-0.1.0-*.whl
-```
-
-### File-based convenience API (optional dependencies)
-
-```bash
-pip install "nuqr-featurizer[io]"
 ```
 
 ### Local development build
 
+From this repository:
+
 ```bash
+python -m pip install maturin
 maturin build --release --out dist --interpreter python
-python -m pip install --force-reinstall --no-deps dist/nuqr_featurizer-*.whl
+python -m pip install --force-reinstall --no-deps dist/nuxplore-*.whl
 ```
 
-If you import from the source tree (for example, `PYTHONPATH=python`), rebuild the
-extension after Rust changes so `python/nuqr_featurizer/_core.abi3.so` is current.
-A stale local extension can cause parity regressions unrelated to source code.
+If you import from the source tree with `PYTHONPATH=python`, rebuild the extension after Rust changes so `python/nuxplore/_core.abi3.so` is current. A stale local extension can cause parity regressions unrelated to source code.
 
-## Quick start
+Project workflow note: use the `nuxplore_test` micromamba environment for local build and validation when available.
+
+```bash
+eval "$(micromamba shell hook -s bash)"
+micromamba activate nuxplore_test
+```
+
+## Quick Start
+
+### File API
+
+```python
+import nuxplore as nf
+
+features = nf.extract_features_from_files(
+    "/path/to/tile.png",
+    "/path/to/tile.mat",
+    mat_key=None,      # auto-detects a suitable 2D instance map when omitted
+    use_gpu=False,
+)
+
+print(len(features))
+print(features[0].keys())
+```
+
+The `.mat` input should contain a 2D instance map where `0` is background and positive integer IDs identify nuclei.
+
+### Array API
 
 ```python
 import numpy as np
-import nuqr_featurizer as nf
+import nuxplore as nf
 
-# H x W x 3 uint8 RGB image
 image = np.zeros((64, 64, 3), dtype=np.uint8)
-
-# Preferred mask format: instance map (0=background, 1..N=nuclei)
 instance_map = np.zeros((64, 64), dtype=np.uint32)
 instance_map[16:28, 20:32] = 1
 instance_map[36:48, 34:46] = 2
 
 features = nf.extract_features(image, instance_map, use_gpu=False)
-print(len(features))       # number of nuclei
-print(features[0].keys())  # feature names
 ```
 
-Convenience call when you already have files:
-
-```python
-import nuqr_featurizer as nf
-
-features = nf.extract_features_from_files(
-    "/path/to/tile.png",
-    "/path/to/tile.mat",
-    mat_key=None,  # auto-detect key if omitted
-    use_gpu=False,
-)
-```
+`extract_features(...)` also accepts a sequence of `(H, W)` boolean masks.
 
 ## Python API
 
 - `check_gpu() -> bool`: returns whether a compatible WGPU adapter is available.
 - `get_gpu_device_count() -> int`: returns `1` when a compatible adapter is available, else `0`.
 - `extract_features(image, masks, use_gpu=None) -> list[dict[str, float]]`:
-  - `image`: `np.ndarray[uint8]` with shape `(H, W, 3)`
-  - `masks`: either:
-    - `np.ndarray[uint32]` instance map with shape `(H, W)`, or
-    - sequence of `np.ndarray[bool]` masks each with shape `(H, W)`
-  - output includes morphology + Hu + advanced shape + NEIS + spatial distance and
-    pre/post normalization feature groups (intensity, GLCM, LBP, H&E color, HOG, CCSM).
+  - `image`: `np.ndarray[uint8]` with shape `(H, W, 3)`.
+  - `masks`: either a `np.ndarray[uint32]` instance map with shape `(H, W)` or a sequence of `np.ndarray[bool]` masks.
+  - returns one feature dictionary per nucleus.
 - `extract_features_from_files(image_path, mat_path, mat_key=None, use_gpu=None) -> list[dict[str, float]]`:
-  - loads RGB image + instance map internally and then runs the same extraction pipeline.
-  - keeps `extract_features(...)` available for power users with custom loaders/layouts.
+  - loads RGB image and instance map in Rust.
+  - expands `~/` paths.
+  - auto-detects a suitable MAT variable when `mat_key` is omitted.
 
-## GPU behavior
+The built extension also exposes `normalize_staining(image)` from `nuxplore._core`; the top-level Python wrapper currently exports the extraction and GPU helpers listed above.
 
-- The package uses **WGPU** for acceleration (not CUDA-specific runtime bindings).
-- If `use_gpu=True` is requested but no compatible adapter is available, the call raises an error.
-- Internal feature kernels use CPU fallback paths where implemented.
+## Feature Coverage
 
-## TLS/CI portability note
+Each nucleus feature dictionary includes:
 
-- The crate dependency graph used for wheel builds avoids `native-tls`/`openssl-sys`,
-  so Linux manylinux/musllinux jobs do not depend on OpenSSL discovery during Cargo builds.
+- `nucleus_id`
+- morphology and centroid features
+- Hu moments
+- advanced shape features
+- NEIS features
+- nearest-neighbor spatial distance
+- `pre_norm_` intensity, GLCM, LBP, H&E color, HOG, and CCSM features
+- `post_norm_` intensity, GLCM, LBP, H&E color, HOG, and CCSM features
 
-## CUDA wheel status
+By default, extraction keeps the normalized image equal to the input image. Set `NUQR_ENABLE_STAIN_NORMALIZATION=1` to enable Vahadane stain normalization for `post_norm_` feature groups.
 
-- No separate CUDA wheel variant is currently produced.
-- Cross-platform wheels include the same WGPU-backed runtime and can use compatible GPU adapters at runtime.
+## GPU Behavior
 
-## Example notebook
+- GPU acceleration uses WGPU, not CUDA-specific runtime bindings.
+- `use_gpu=False` keeps execution on CPU.
+- `use_gpu=True` requires a compatible WGPU adapter and raises an error if none is available.
+- `check_gpu()` and `get_gpu_device_count()` report adapter availability.
+- Standard wheels are GPU-capable through WGPU on supported systems; there is no separate CUDA wheel variant.
 
-- `examples/quickstart.ipynb` demonstrates an end-to-end Python usage flow.
+## Validation Status
 
-## Type hints
+Sequential, single-threaded validation was run against `/home/adnanraza/Downloads/Sample_For_Adnan/GTEX-1F75B-0126_Features` using 248 pairable images. One tile, `GTEX-1F75B-0126_tile_40000_7500.png`, was skipped because no matching reference CSV was present.
 
-The wheel includes `py.typed` and `.pyi` stubs:
+All three input methods produced identical correlation with the original feature CSVs:
 
-- `nuqr_featurizer/__init__.pyi`
-- `nuqr_featurizer/_core.pyi`
+| Rank | Input method | API path | Python file-loading dependencies | Mean Pearson r | Min Pearson r | Pass rate | Recommendation |
+|------|--------------|----------|----------------------------------|----------------|---------------|-----------|----------------|
+| 1 | Dependency-free file input | `extract_features_from_files(image_path, mat_path, ...)` | None for file loading | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Preferred |
+| 1 | Preloaded arrays | user loads image and instance map, then calls `extract_features(image, instance_map, ...)` | User-managed NumPy array path | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Use for custom in-memory pipelines |
+| 1 | Dependency-backed file loading | Python loads files with NumPy/Pillow/SciPy before calling `extract_features(...)` | NumPy, Pillow, SciPy | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Legacy-compatible, not preferred |
 
-## Compare against pre-generated Python features
+## Compare Against Pre-generated Python Features
 
-Use `scripts/compare_with_python_features.py` to compare Rust output with existing CSV features
-without re-running the original Python pipeline.
+Use `scripts/compare_with_python_features.py` to compare Rust output with existing CSV features without re-running the original Python pipeline.
 
 ```bash
 python scripts/compare_with_python_features.py \
@@ -144,14 +186,25 @@ python scripts/compare_with_python_features.py \
   --feature-summary-csv /tmp/compare_feature_summary.csv
 ```
 
-API mode for comparison:
-- `--extractor-api direct` (default): use `extract_features(image, instance_map)`
-- `--extractor-api files`: use `extract_features_from_files(image_path, mat_path)`
+API mode:
+
+- `--extractor-api direct`: use `extract_features(image, instance_map)`.
+- `--extractor-api files`: use `extract_features_from_files(image_path, mat_path)`.
 
 Common controls:
-- `--image sample1 --image sample2` to run selected images only
-- `--image-list-file selected_images.txt` for batch selection
-- `--mat-key inst_map` if your `.mat` key is known
-- `--id-column nucleus_id` if the reference CSV has explicit nucleus IDs
 
-For deeper architecture and contributor workflows, see `docs/developer-guide.md`.
+- `--image sample1 --image sample2` to run selected images only.
+- `--image-list-file selected_images.txt` for batch selection.
+- `--mat-key inst_map` if the MAT key is known.
+- `--id-column nucleus_id` if the reference CSV has explicit nucleus IDs.
+
+## Type Hints
+
+The wheel includes `py.typed` and `.pyi` stubs:
+
+- `nuxplore/__init__.pyi`
+- `nuxplore/_core.pyi`
+
+## Developer Documentation
+
+For architecture, local quality commands, benchmarks, and contributor workflow, see [`docs/developer-guide.md`](docs/developer-guide.md).

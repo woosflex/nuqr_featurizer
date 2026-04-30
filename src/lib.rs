@@ -1,4 +1,4 @@
-//! NuQR Featurizer: High-performance histopathology feature extraction
+//! NuXplore: High-performance histopathology feature extraction
 //!
 //! This library provides fast, GPU-accelerated feature extraction for histopathology images.
 //! It extracts morphological, texture, color, and spatial features from nucleus segmentations.
@@ -6,10 +6,12 @@
 use ndarray::{s, Array2, Array3, ArrayView2, ArrayView3};
 use pyo3::prelude::*;
 use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
 
 mod core;
 pub mod features;
 pub mod gpu;
+pub mod io;
 pub mod stain_norm;
 
 // Re-export core types
@@ -383,6 +385,32 @@ fn extract_all_features_from_instance_map(
     Ok(outputs)
 }
 
+fn feature_maps_to_pylist<'py>(
+    py: Python<'py>,
+    feature_maps: Vec<HashMap<String, f64>>,
+) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    use pyo3::types::{PyDict, PyList};
+
+    let py_results = PyList::empty_bound(py);
+    for feature_map in feature_maps {
+        let py_dict = PyDict::new_bound(py);
+        for (key, value) in feature_map {
+            py_dict.set_item(key, value)?;
+        }
+        py_results.append(py_dict)?;
+    }
+    Ok(py_results)
+}
+
+fn expand_user_path(raw_path: &str) -> PathBuf {
+    if let Some(stripped) = raw_path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return Path::new(&home).join(stripped);
+        }
+    }
+    PathBuf::from(raw_path)
+}
+
 /// Python module initialization
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -435,7 +463,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
         use numpy::{PyReadonlyArray2, PyReadonlyArray3, PyUntypedArrayMethods};
         use pyo3::exceptions::PyTypeError;
-        use pyo3::types::{PyDict, PyList};
+        use pyo3::types::PyList;
 
         let image_arr: PyReadonlyArray3<u8> = image.extract()?;
         let image_shape = image_arr.shape();
@@ -553,16 +581,42 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
         add_nearest_neighbor_distances(&mut results);
 
-        let py_results = PyList::empty_bound(py);
-        for feature_map in results {
-            let py_dict = PyDict::new_bound(py);
-            for (key, value) in feature_map {
-                py_dict.set_item(key, value)?;
-            }
-            py_results.append(py_dict)?;
+        feature_maps_to_pylist(py, results)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(signature = (image_path, mat_path, mat_key=None, use_gpu=None))]
+    fn extract_features_from_files<'py>(
+        py: Python<'py>,
+        image_path: &str,
+        mat_path: &str,
+        mat_key: Option<&str>,
+        use_gpu: Option<bool>,
+    ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        let use_gpu = use_gpu.unwrap_or(false);
+        if use_gpu && !is_gpu_available() {
+            return Err(pyo3::PyErr::from(FeaturizerError::CudaError(
+                "GPU requested but no compatible WGPU adapter is available".to_string(),
+            )));
         }
 
-        Ok(py_results)
+        let image_path = expand_user_path(image_path);
+        let mat_path = expand_user_path(mat_path);
+
+        let image = io::image::load_rgb_image(&image_path).map_err(pyo3::PyErr::from)?;
+        let (instance_map, _detected_key) =
+            io::mat::load_instance_map(&mat_path, mat_key).map_err(pyo3::PyErr::from)?;
+
+        if image.dim().0 != instance_map.dim().0 || image.dim().1 != instance_map.dim().1 {
+            return Err(pyo3::PyErr::from(FeaturizerError::InvalidDimensions {
+                expected: format!("({}, {})", image.dim().0, image.dim().1),
+                got: format!("({}, {})", instance_map.dim().0, instance_map.dim().1),
+            }));
+        }
+
+        let results = extract_all_features_from_instance_map(&image.view(), &instance_map.view(), use_gpu)
+            .map_err(pyo3::PyErr::from)?;
+        feature_maps_to_pylist(py, results)
     }
 
     Ok(())

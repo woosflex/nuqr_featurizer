@@ -7,7 +7,7 @@
 //! 4. Known reference outputs from scikit-image examples
 
 use ndarray::array;
-use nuqr_featurizer::features::glcm::calculate_glcm_features;
+use nuxplore::features::glcm::calculate_glcm_features;
 
 #[test]
 fn test_glcm_empty_mask_returns_zeros() {

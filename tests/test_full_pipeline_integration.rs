@@ -1,18 +1,18 @@
 use std::collections::HashMap;
 
 use ndarray::{Array2, Array3};
-use nuqr_featurizer::features::ccsm::calculate_ccsm_features_with_gpu;
-use nuqr_featurizer::features::glcm::calculate_glcm_features_with_gpu;
-use nuqr_featurizer::features::he_color::calculate_he_color_features;
-use nuqr_featurizer::features::hog::calculate_hog_features;
-use nuqr_featurizer::features::intensity::calculate_intensity_features;
-use nuqr_featurizer::features::lbp::calculate_lbp_features;
-use nuqr_featurizer::features::moments::calculate_hu_moments;
-use nuqr_featurizer::features::morphology::calculate_morphological_features;
-use nuqr_featurizer::features::neis::calculate_neis_features;
-use nuqr_featurizer::features::shape::calculate_advanced_shape_features;
-use nuqr_featurizer::features::spatial::calculate_nearest_neighbor_distance;
-use nuqr_featurizer::{extract_patch, normalize_staining_default, rgb_to_grayscale};
+use nuxplore::features::ccsm::calculate_ccsm_features_with_gpu;
+use nuxplore::features::glcm::calculate_glcm_features_with_gpu;
+use nuxplore::features::he_color::calculate_he_color_features;
+use nuxplore::features::hog::calculate_hog_features;
+use nuxplore::features::intensity::calculate_intensity_features;
+use nuxplore::features::lbp::calculate_lbp_features;
+use nuxplore::features::moments::calculate_hu_moments;
+use nuxplore::features::morphology::calculate_morphological_features;
+use nuxplore::features::neis::calculate_neis_features;
+use nuxplore::features::shape::calculate_advanced_shape_features;
+use nuxplore::features::spatial::calculate_nearest_neighbor_distance;
+use nuxplore::{extract_patch, normalize_staining_default, rgb_to_grayscale};
 
 fn paint_disk_u32(map: &mut Array2<u32>, label: u32, cy: isize, cx: isize, radius: isize) {
     let (h, w) = map.dim();

@@ -3,18 +3,18 @@ use ndarray::{s, Array2, Array3};
 use std::sync::Once;
 use std::time::Duration;
 
-use nuqr_featurizer::features::ccsm::calculate_ccsm_features_with_gpu;
-use nuqr_featurizer::features::ccsm_clahe::clahe_u8_with_gpu;
-use nuqr_featurizer::features::extract_morphology_batch;
-use nuqr_featurizer::features::glcm::calculate_glcm_features_with_gpu;
-use nuqr_featurizer::features::he_color::calculate_he_color_features;
-use nuqr_featurizer::features::hog::calculate_hog_features;
-use nuqr_featurizer::features::intensity::calculate_intensity_features;
-use nuqr_featurizer::features::lbp::calculate_lbp_features;
-use nuqr_featurizer::features::neis::calculate_neis_features;
-use nuqr_featurizer::features::shape::calculate_advanced_shape_features;
-use nuqr_featurizer::features::spatial::calculate_nearest_neighbor_distance;
-use nuqr_featurizer::{init_logging, is_gpu_available};
+use nuxplore::features::ccsm::calculate_ccsm_features_with_gpu;
+use nuxplore::features::ccsm_clahe::clahe_u8_with_gpu;
+use nuxplore::features::extract_morphology_batch;
+use nuxplore::features::glcm::calculate_glcm_features_with_gpu;
+use nuxplore::features::he_color::calculate_he_color_features;
+use nuxplore::features::hog::calculate_hog_features;
+use nuxplore::features::intensity::calculate_intensity_features;
+use nuxplore::features::lbp::calculate_lbp_features;
+use nuxplore::features::neis::calculate_neis_features;
+use nuxplore::features::shape::calculate_advanced_shape_features;
+use nuxplore::features::spatial::calculate_nearest_neighbor_distance;
+use nuxplore::{init_logging, is_gpu_available};
 
 static INIT_LOGGING: Once = Once::new();
 

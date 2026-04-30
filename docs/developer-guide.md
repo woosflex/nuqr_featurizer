@@ -1,18 +1,20 @@
-# NuQR Featurizer Developer Guide
+# NuXplore Developer Guide
 
 This guide describes how to work on the Rust/PyO3 codebase and ship wheels reliably.
 
 Dependency model:
-- Required runtime dependency: `numpy`
-- Optional file-I/O API dependency set: `pillow` + `scipy`
+- Required Python runtime dependencies: none for the file API.
+- Optional array API dependency: `numpy` through `pip install "nuxplore[array]"`.
+- Development and validation dependencies: `requirements.txt`.
 
 ## Architecture summary
 
 - `src/lib.rs`: PyO3 module entrypoint and Python API wiring.
 - `src/features/`: CPU and optional WGPU feature implementations.
 - `src/gpu/`: WGPU backend + shader pipelines.
+- `src/io/`: Rust image and MATLAB v5 readers used by the dependency-free file API.
 - `src/stain_norm/`: Vahadane stain normalization.
-- `python/nuqr_featurizer/`: Python package wrapper, stubs, and typed marker.
+- `python/nuxplore/`: Python package wrapper, stubs, and typed marker.
 
 ## Local development setup
 
@@ -21,20 +23,21 @@ Dependency model:
 3. Build and install a local wheel:
 
 ```bash
+python -m pip install maturin
 maturin build --release --out dist --interpreter python
 python -m pip install -r requirements.txt
-python -m pip install --force-reinstall dist/nuqr_featurizer-*.whl
+python -m pip install --force-reinstall --no-deps dist/nuxplore-*.whl
 ```
 
 When running from the source tree (`PYTHONPATH=python`), keep
-`python/nuqr_featurizer/_core.abi3.so` synchronized with Rust source changes.
+`python/nuxplore/_core.abi3.so` synchronized with Rust source changes.
 If this binary is stale, parity checks can regress even when Python wrappers are correct.
 
 If you use the project micromamba environment:
 
 ```bash
 eval "$(micromamba shell hook -s bash)"
-micromamba activate nuqr_library
+micromamba activate nuxplore_test
 ```
 
 ## Core quality commands
@@ -72,8 +75,10 @@ Dimension mismatches return structured errors from `FeaturizerError`.
 `extract_features_from_files` is the convenience path:
 
 - Inputs: `image_path`, `mat_path`, optional `mat_key`, optional `use_gpu`
-- Behavior: loads files via `python/nuqr_featurizer/io.py`, validates shape compatibility, then delegates to `extract_features`
-- Dependency note: requires optional Python dependencies (`Pillow`, `scipy`) via `pip install "nuqr-featurizer[io]"`
+- Behavior: loads RGB image and MAT instance map in Rust through `src/io/`, validates shape compatibility, then runs the same extraction pipeline as the array API.
+- Dependency note: does not require Python `numpy`, `pillow`, or `scipy` at runtime.
+
+`normalize_staining` is exposed by the compiled `_core` module. The extraction pipeline enables Vahadane post-normalization when `NUQR_ENABLE_STAIN_NORMALIZATION` is set to `1`, `true`, `yes`, or `on`.
 
 Comparison script API mode:
 
@@ -106,7 +111,7 @@ TestPyPI install command for collaborators:
 python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple \
-  nuqr-featurizer
+  nuxplore
 ```
 
 ## GPU notes
@@ -124,5 +129,5 @@ python -m pip install \
 
 - User-facing package docs: `README.md`
 - User example notebook: `examples/quickstart.ipynb`
-- Type stubs: `python/nuqr_featurizer/__init__.pyi` and `_core.pyi`
-- Typed marker: `python/nuqr_featurizer/py.typed`
+- Type stubs: `python/nuxplore/__init__.pyi` and `_core.pyi`
+- Typed marker: `python/nuxplore/py.typed`

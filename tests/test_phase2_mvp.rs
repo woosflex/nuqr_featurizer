@@ -1,6 +1,6 @@
 use ndarray::Array2;
-use nuqr_featurizer::features::extract_morphology_batch;
-use nuqr_featurizer::FeaturizerError;
+use nuxplore::features::extract_morphology_batch;
+use nuxplore::FeaturizerError;
 
 fn feature<'a>(map: &'a std::collections::HashMap<String, f64>, key: &str) -> &'a f64 {
     map.get(key)

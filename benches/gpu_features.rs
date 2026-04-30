@@ -2,10 +2,10 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use ndarray::Array2;
 use std::sync::Once;
 
-use nuqr_featurizer::features::ccsm_clahe::clahe_u8_with_gpu;
-use nuqr_featurizer::features::glcm::calculate_glcm_features_with_gpu;
-use nuqr_featurizer::features::hog::calculate_hog_features;
-use nuqr_featurizer::{init_logging, is_gpu_available};
+use nuxplore::features::ccsm_clahe::clahe_u8_with_gpu;
+use nuxplore::features::glcm::calculate_glcm_features_with_gpu;
+use nuxplore::features::hog::calculate_hog_features;
+use nuxplore::{init_logging, is_gpu_available};
 
 static INIT_LOGGING: Once = Once::new();
 

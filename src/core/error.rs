@@ -1,8 +1,8 @@
-//! Error types for the NuQR featurizer library
+//! Error types for the NuXplore library
 
 use thiserror::Error;
 
-/// Error type for all fallible NuQR featurizer operations.
+/// Error type for all fallible NuXplore operations.
 #[derive(Error, Debug)]
 pub enum FeaturizerError {
     /// Input values violated semantic preconditions.
