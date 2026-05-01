@@ -147,6 +147,9 @@ features = nf.extract_features(image, instance_map, use_gpu=False)
   - saves one PNG per nucleus using masked, padded crops.
   - writes under `pre_normalized_nuclei/` and `post_normalized_nuclei/`.
   - returns per-nucleus records with `nucleus_id`, `bbox`, and output paths.
+- `batch_extract_features(image_root, mat_root, output_csv_root, output_nuclei_root, ..., save_crops=False, ...) -> BatchResult`:
+  - reusable batch entry point for paired image/MAT extraction.
+  - set `save_crops=True` to write cropped nuclei alongside the CSV outputs.
 - `BatchExtractor.extract_features(..., save_crops=False, ...) -> BatchResult`:
   - performs batch extraction through the reusable class API.
   - set `save_crops=True` to write crop PNGs alongside the CSV outputs.
@@ -187,52 +190,11 @@ By default, extraction keeps the normalized image equal to the input image. Set 
 - `check_gpu()` and `get_gpu_device_count()` report adapter availability.
 - Standard wheels are GPU-capable through WGPU on supported systems; there is no separate CUDA wheel variant.
 
-## Validation Status
+## Validation
 
-Sequential, single-threaded validation was run against `/home/adnanraza/Downloads/Sample_For_Adnan/GTEX-1F75B-0126_Features` using 248 pairable images. One tile, `GTEX-1F75B-0126_tile_40000_7500.png`, was skipped because no matching reference CSV was present.
+The package is exercised against the Python reference pipeline and includes crop-saving and batch orchestration coverage in the test suite.
 
-All three input methods produced identical correlation with the original feature CSVs:
-
-| Rank | Input method | API path | Python file-loading dependencies | Mean Pearson r | Min Pearson r | Pass rate | Recommendation |
-|------|--------------|----------|----------------------------------|----------------|---------------|-----------|----------------|
-| 1 | Dependency-free file input | `extract_features_from_files(image_path, mat_path, ...)` | None for file loading | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Preferred |
-| 1 | Preloaded arrays | user loads image and instance map, then calls `extract_features(image, instance_map, ...)` | User-managed NumPy array path | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Use for custom in-memory pipelines |
-| 1 | Dependency-backed file loading | Python loads files with NumPy/Pillow/SciPy before calling `extract_features(...)` | NumPy, Pillow, SciPy | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Legacy-compatible, not preferred |
-
-Batch/crop API validation summary:
-
-- Milestone 1 crop-save API validated with Rust integration tests:
-  - `cargo test crop_export -- --nocapture`
-  - `cargo test test_full_pipeline_end_to_end_cpu`
-- Milestone 2/3 batch orchestration validated with source-tree smoke runs (`PYTHONPATH=python`) and CLI wrapper smoke runs on synthetic paired image/MAT inputs.
-- `inst_type` compatibility behavior is explicit:
-  - if `inst_type` is present and readable, CSV `nucleus_type` is populated from MAT values.
-  - if `inst_type` is unavailable/missing, run continues with warning(s) and `nucleus_type="Unknown"`.
-
-## Compare Against Pre-generated Python Features
-
-Use `scripts/compare_with_python_features.py` to compare Rust output with existing CSV features without re-running the original Python pipeline.
-
-```bash
-python scripts/compare_with_python_features.py \
-  --dataset-root ~/Downloads/Sample_For_Adnan \
-  --max-images 5 \
-  --summary-csv /tmp/compare_summary.csv \
-  --details-csv /tmp/compare_details.csv \
-  --feature-summary-csv /tmp/compare_feature_summary.csv
-```
-
-API mode:
-
-- `--extractor-api direct`: use `extract_features(image, instance_map)`.
-- `--extractor-api files`: use `extract_features_from_files(image_path, mat_path)`.
-
-Common controls:
-
-- `--image sample1 --image sample2` to run selected images only.
-- `--image-list-file selected_images.txt` for batch selection.
-- `--mat-key inst_map` if the MAT key is known.
-- `--id-column nucleus_id` if the reference CSV has explicit nucleus IDs.
+For contributor validation commands, parity checks, and batch/crop behavior notes, see [`docs/developer-guide.md`](docs/developer-guide.md).
 
 ## Type Hints
 
