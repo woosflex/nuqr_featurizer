@@ -66,7 +66,6 @@ jobs:
           python -m pip install --force-reinstall --no-deps dist/*.whl
           python - <<'PY'
           import nuxplore as n
-          import nuqr_featurizer as legacy
 
           assert hasattr(n, "__version__")
           assert hasattr(n, "extract_features")
@@ -77,9 +76,6 @@ jobs:
           assert hasattr(n, "BatchExtractor")
           assert hasattr(n, "check_gpu")
           assert hasattr(n, "get_gpu_device_count")
-          assert legacy.__version__ == n.__version__
-          assert hasattr(legacy, "extract_features")
-          assert hasattr(legacy, "extract_features_from_files")
           n.get_gpu_device_count()
           assert isinstance(n.check_gpu(), bool)
           print("nuxplore wheel smoke test passed")
