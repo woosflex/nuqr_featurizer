@@ -209,6 +209,50 @@ def test_extract_features_can_save_crops(tmp_path: Path) -> None:
     assert not (output_dir / "post_normalized_nuclei").exists()
 
 
+def test_extract_features_from_files_can_save_crops(tmp_path: Path) -> None:
+    from nuxplore import extract_features_from_files
+
+    image_root, mat_root, _out_csv_root, _out_nuclei_root = _make_test_data(tmp_path)
+    image_path = image_root / "tile_a.png"
+    mat_path = mat_root / "tile_a.mat"
+    output_dir = tmp_path / "extract_features_from_files_crops"
+
+    features = extract_features_from_files(
+        image_path=image_path,
+        mat_path=mat_path,
+        mat_key="inst_map",
+        use_gpu=False,
+        save_crops=True,
+        crop_output_dir=output_dir,
+        save_pre_normalized_crops=False,
+        save_post_normalized_crops=True,
+    )
+
+    assert len(features) == 2
+    assert not (output_dir / "pre_normalized_nuclei").exists()
+    assert (output_dir / "post_normalized_nuclei" / "nucleus_0001.png").exists()
+    assert (output_dir / "post_normalized_nuclei" / "nucleus_0002.png").exists()
+
+
+def test_extract_features_from_files_default_no_crop_outputs(tmp_path: Path) -> None:
+    from nuxplore import extract_features_from_files
+
+    image_root, mat_root, _out_csv_root, _out_nuclei_root = _make_test_data(tmp_path)
+    image_path = image_root / "tile_a.png"
+    mat_path = mat_root / "tile_a.mat"
+    output_dir = tmp_path / "extract_features_from_files_default"
+
+    features = extract_features_from_files(
+        image_path=image_path,
+        mat_path=mat_path,
+        mat_key="inst_map",
+        use_gpu=False,
+    )
+
+    assert len(features) == 2
+    assert not output_dir.exists()
+
+
 def test_batch_extract_and_crop_post_only(tmp_path: Path) -> None:
     from nuxplore.batch import batch_extract_and_crop
 

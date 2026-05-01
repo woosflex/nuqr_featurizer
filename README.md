@@ -7,11 +7,13 @@ It provides two primary input paths:
 - `extract_features_from_files(...)`: preferred path for image + `.mat` files. Image and MAT loading happen in Rust and do not require Python `numpy`, `pillow`, or `scipy`.
 - `extract_features(...)`: NumPy array path for in-memory pipelines. Install the optional `array` extra when using this API from a fresh environment.
 
-Additional orchestration APIs:
+Batch and crop APIs:
 
-- `save_cropped_nuclei_from_files(...)`: saves masked nucleus crops (`pre_normalized_nuclei` and `post_normalized_nuclei`) for one image/MAT pair.
 - `extract_features(..., save_crops=True, crop_output_dir=...)`: saves masked crops while running single-image feature extraction on in-memory arrays.
+- `extract_features_from_files(..., save_crops=True, crop_output_dir=...)`: saves masked crops while loading the image and MAT file in Rust.
+- `save_cropped_nuclei_from_files(...)`: saves masked nucleus crops (`pre_normalized_nuclei` and `post_normalized_nuclei`) for one image/MAT pair.
 - `batch_extract_features(..., save_crops=True, ...)`: runs paired image/MAT batch extraction and can save crop outputs alongside CSVs.
+- `BatchExtractor(...)`: reusable class API for batch extraction and crop export.
 - `batch_extract_and_crop(...)`: runs paired image/MAT batch extraction, writes per-image CSVs, and writes cropped nucleus PNGs by default.
 
 The package uses WGPU for optional cross-platform GPU acceleration. No separate CUDA wheel is currently produced.
@@ -130,6 +132,19 @@ features = nf.extract_features(image, instance_map, use_gpu=False)
 
 `extract_features(...)` also accepts a sequence of `(H, W)` boolean masks.
 
+To save crops while using the file API:
+
+```python
+import nuxplore as nf
+
+features = nf.extract_features_from_files(
+    "/path/to/tile.png",
+    "/path/to/tile.mat",
+    save_crops=True,
+    crop_output_dir="/tmp/nuxplore_crops",
+)
+```
+
 ## Python API
 
 - `check_gpu() -> bool`: returns whether a compatible WGPU adapter is available.
@@ -139,10 +154,11 @@ features = nf.extract_features(image, instance_map, use_gpu=False)
   - `masks`: either a `np.ndarray[uint32]` instance map with shape `(H, W)` or a sequence of `np.ndarray[bool]` masks.
   - returns one feature dictionary per nucleus.
   - optional crop saving: set `save_crops=True` and `crop_output_dir=...` to write `pre_normalized_nuclei/` and `post_normalized_nuclei/` PNGs.
-- `extract_features_from_files(image_path, mat_path, mat_key=None, use_gpu=None) -> list[dict[str, float]]`:
+- `extract_features_from_files(image_path, mat_path, mat_key=None, use_gpu=None, save_crops=False, crop_output_dir=None, padding=10, save_pre_normalized_crops=True, save_post_normalized_crops=True) -> list[dict[str, float]]`:
   - loads RGB image and instance map in Rust.
   - expands `~/` paths.
   - auto-detects a suitable MAT variable when `mat_key` is omitted.
+  - optional crop saving: set `save_crops=True` and `crop_output_dir=...` to write `pre_normalized_nuclei/` and `post_normalized_nuclei/` PNGs.
 - `save_cropped_nuclei_from_files(image_path, mat_path, output_dir, mat_key=None, padding=10, save_pre_normalized=True, save_post_normalized=True) -> list[dict]`:
   - saves one PNG per nucleus using masked, padded crops.
   - writes under `pre_normalized_nuclei/` and `post_normalized_nuclei/`.
@@ -160,8 +176,6 @@ features = nf.extract_features(image, instance_map, use_gpu=False)
   - writes cropped nucleus PNGs for each processed image by default.
   - supports metadata enrichment through `metadata_csv`, `metadata_key_column`, `metadata_cols`, and `metadata_id_source`.
   - surfaces non-fatal warnings when `inst_type` is unavailable/missing and uses `nucleus_type="Unknown"` fallback.
-
-The built extension also exposes `normalize_staining(image)` from `nuxplore._core`; the top-level Python wrapper currently exports the extraction and GPU helpers listed above.
 
 Legacy script path:
 

@@ -81,6 +81,10 @@ Dimension mismatches return structured errors from `FeaturizerError`.
 - Inputs: `image_path`, `mat_path`, optional `mat_key`, optional `use_gpu`
 - Behavior: loads RGB image and MAT instance map in Rust through `src/io/`, validates shape compatibility, then runs the same extraction pipeline as the array API.
 - Dependency note: does not require Python `numpy`, `pillow`, or `scipy` at runtime.
+- Optional crop export:
+  - `save_crops=True`
+  - `crop_output_dir=<path>`
+  - `save_pre_normalized_crops` and `save_post_normalized_crops` control which crop sets are written.
 
 `normalize_staining` is exposed by the compiled `_core` module. The extraction pipeline enables Vahadane post-normalization when `NUQR_ENABLE_STAIN_NORMALIZATION` is set to `1`, `true`, `yes`, or `on`.
 

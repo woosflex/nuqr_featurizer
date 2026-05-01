@@ -99,6 +99,11 @@ def extract_features_from_files(
     *,
     mat_key: Optional[str] = ...,
     use_gpu: Optional[bool] = ...,
+    save_crops: bool = ...,
+    crop_output_dir: Optional[PathInput] = ...,
+    padding: int = ...,
+    save_pre_normalized_crops: bool = ...,
+    save_post_normalized_crops: bool = ...,
 ) -> List[FeatureMap]: ...
 def save_cropped_nuclei_from_files(
     image_path: PathInput,

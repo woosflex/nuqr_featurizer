@@ -7,7 +7,7 @@ from ._core import (
     __version__,
     check_gpu,
     extract_features as _extract_features,
-    extract_features_from_files,
+    extract_features_from_files as _extract_features_from_files,
     get_gpu_device_count,
     normalize_staining as _normalize_staining,
     save_cropped_nuclei_from_files,
@@ -82,6 +82,43 @@ def extract_features(
                     output_dir / "post_normalized_nuclei" / f"nucleus_{label:04d}.png",
                     post_patch,
                 )
+    return features
+
+
+def extract_features_from_files(
+    image_path: str | Path,
+    mat_path: str | Path,
+    *,
+    mat_key: Optional[str] = None,
+    use_gpu: Optional[bool] = None,
+    save_crops: bool = False,
+    crop_output_dir: Optional[str | Path] = None,
+    padding: int = 10,
+    save_pre_normalized_crops: bool = True,
+    save_post_normalized_crops: bool = True,
+) -> list[dict[str, float]]:
+    image_path_str = str(Path(image_path))
+    mat_path_str = str(Path(mat_path))
+    features = _extract_features_from_files(
+        image_path_str,
+        mat_path_str,
+        mat_key=mat_key,
+        use_gpu=use_gpu,
+    )
+    if not save_crops:
+        return features
+    if crop_output_dir is None:
+        raise ValueError("crop_output_dir is required when save_crops=True")
+    crop_output_dir_str = str(Path(crop_output_dir))
+    save_cropped_nuclei_from_files(
+        image_path=image_path_str,
+        mat_path=mat_path_str,
+        output_dir=crop_output_dir_str,
+        mat_key=mat_key,
+        padding=padding,
+        save_pre_normalized=save_pre_normalized_crops,
+        save_post_normalized=save_post_normalized_crops,
+    )
     return features
 
 
