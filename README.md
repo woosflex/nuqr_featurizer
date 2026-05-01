@@ -7,6 +7,13 @@ It provides two primary input paths:
 - `extract_features_from_files(...)`: preferred path for image + `.mat` files. Image and MAT loading happen in Rust and do not require Python `numpy`, `pillow`, or `scipy`.
 - `extract_features(...)`: NumPy array path for in-memory pipelines. Install the optional `array` extra when using this API from a fresh environment.
 
+Additional orchestration APIs:
+
+- `save_cropped_nuclei_from_files(...)`: saves masked nucleus crops (`pre_normalized_nuclei` and `post_normalized_nuclei`) for one image/MAT pair.
+- `extract_features(..., save_crops=True, crop_output_dir=...)`: saves masked crops while running single-image feature extraction on in-memory arrays.
+- `batch_extract_features(..., save_crops=True, ...)`: runs paired image/MAT batch extraction and can save crop outputs alongside CSVs.
+- `batch_extract_and_crop(...)`: runs paired image/MAT batch extraction, writes per-image CSVs, and writes cropped nucleus PNGs by default.
+
 The package uses WGPU for optional cross-platform GPU acceleration. No separate CUDA wheel is currently produced.
 
 ## Installation
@@ -131,12 +138,31 @@ features = nf.extract_features(image, instance_map, use_gpu=False)
   - `image`: `np.ndarray[uint8]` with shape `(H, W, 3)`.
   - `masks`: either a `np.ndarray[uint32]` instance map with shape `(H, W)` or a sequence of `np.ndarray[bool]` masks.
   - returns one feature dictionary per nucleus.
+  - optional crop saving: set `save_crops=True` and `crop_output_dir=...` to write `pre_normalized_nuclei/` and `post_normalized_nuclei/` PNGs.
 - `extract_features_from_files(image_path, mat_path, mat_key=None, use_gpu=None) -> list[dict[str, float]]`:
   - loads RGB image and instance map in Rust.
   - expands `~/` paths.
   - auto-detects a suitable MAT variable when `mat_key` is omitted.
+- `save_cropped_nuclei_from_files(image_path, mat_path, output_dir, mat_key=None, padding=10, save_pre_normalized=True, save_post_normalized=True) -> list[dict]`:
+  - saves one PNG per nucleus using masked, padded crops.
+  - writes under `pre_normalized_nuclei/` and `post_normalized_nuclei/`.
+  - returns per-nucleus records with `nucleus_id`, `bbox`, and output paths.
+- `BatchExtractor.extract_features(..., save_crops=False, ...) -> BatchResult`:
+  - performs batch extraction through the reusable class API.
+  - set `save_crops=True` to write crop PNGs alongside the CSV outputs.
+- `BatchExtractor.extract_and_crop(..., save_pre_normalized_crops=True, save_post_normalized_crops=True) -> BatchResult`:
+  - convenience wrapper for batch extraction with crop saving enabled.
+- `batch_extract_and_crop(image_root, mat_root, output_csv_root, output_nuclei_root, ...) -> BatchResult`:
+  - scans paired image/MAT files and writes one CSV per image.
+  - writes cropped nucleus PNGs for each processed image by default.
+  - supports metadata enrichment through `metadata_csv`, `metadata_key_column`, `metadata_cols`, and `metadata_id_source`.
+  - surfaces non-fatal warnings when `inst_type` is unavailable/missing and uses `nucleus_type="Unknown"` fallback.
 
 The built extension also exposes `normalize_staining(image)` from `nuxplore._core`; the top-level Python wrapper currently exports the extraction and GPU helpers listed above.
+
+Legacy script path:
+
+- `scripts/batch_extract_and_crop.py` is now a thin CLI wrapper that delegates to `nuxplore.batch.main()`.
 
 ## Feature Coverage
 
@@ -172,6 +198,16 @@ All three input methods produced identical correlation with the original feature
 | 1 | Dependency-free file input | `extract_features_from_files(image_path, mat_path, ...)` | None for file loading | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Preferred |
 | 1 | Preloaded arrays | user loads image and instance map, then calls `extract_features(image, instance_map, ...)` | User-managed NumPy array path | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Use for custom in-memory pipelines |
 | 1 | Dependency-backed file loading | Python loads files with NumPy/Pillow/SciPy before calling `extract_features(...)` | NumPy, Pillow, SciPy | `0.9999822986385778` | `0.999626159972983` | `0.9998058183714852` | Legacy-compatible, not preferred |
+
+Batch/crop API validation summary:
+
+- Milestone 1 crop-save API validated with Rust integration tests:
+  - `cargo test crop_export -- --nocapture`
+  - `cargo test test_full_pipeline_end_to_end_cpu`
+- Milestone 2/3 batch orchestration validated with source-tree smoke runs (`PYTHONPATH=python`) and CLI wrapper smoke runs on synthetic paired image/MAT inputs.
+- `inst_type` compatibility behavior is explicit:
+  - if `inst_type` is present and readable, CSV `nucleus_type` is populated from MAT values.
+  - if `inst_type` is unavailable/missing, run continues with warning(s) and `nucleus_type="Unknown"`.
 
 ## Compare Against Pre-generated Python Features
 

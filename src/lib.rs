@@ -24,6 +24,14 @@ pub use stain_norm::{normalize_staining_default, VahadaneStainNormalizer};
 
 const PATCH_PADDING: usize = 10;
 
+#[derive(Clone, Debug)]
+pub struct CropSaveRecord {
+    pub nucleus_id: u32,
+    pub bbox: (usize, usize, usize, usize),
+    pub pre_path: Option<PathBuf>,
+    pub post_path: Option<PathBuf>,
+}
+
 #[derive(Clone, Copy)]
 struct BoundingBox {
     min_row: usize,
@@ -200,6 +208,16 @@ fn crop_rgb_patch(image: &ArrayView3<'_, u8>, bounds: BoundingBox) -> Array3<u8>
         .to_owned()
 }
 
+fn apply_mask_to_rgb_patch(rgb_patch: &mut Array3<u8>, mask_patch: &ArrayView2<'_, bool>) {
+    for ((row, col), &keep) in mask_patch.indexed_iter() {
+        if !keep {
+            rgb_patch[[row, col, 0]] = 0;
+            rgb_patch[[row, col, 1]] = 0;
+            rgb_patch[[row, col, 2]] = 0;
+        }
+    }
+}
+
 fn to_f32_grayscale(gray_u8: &Array2<u8>) -> Array2<f32> {
     gray_u8.mapv(|v| v as f32)
 }
@@ -318,6 +336,66 @@ fn normalized_image_for_feature_extraction(image: &ArrayView3<'_, u8>) -> Array3
     } else {
         image.to_owned()
     }
+}
+
+pub fn save_cropped_nuclei_from_instance_map(
+    image: &ArrayView3<'_, u8>,
+    instance_map: &ArrayView2<'_, u32>,
+    output_dir: &Path,
+    padding: usize,
+    save_pre_normalized: bool,
+    save_post_normalized: bool,
+) -> Result<Vec<CropSaveRecord>> {
+    let (image_h, image_w, _) = image.dim();
+    let map_shape = instance_map.dim();
+    if map_shape.0 != image_h || map_shape.1 != image_w {
+        return Err(FeaturizerError::InvalidDimensions {
+            expected: format!("({}, {})", image_h, image_w),
+            got: format!("({}, {})", map_shape.0, map_shape.1),
+        });
+    }
+
+    let normalized_image = normalize_staining_default(image).unwrap_or_else(|_| image.to_owned());
+    let normalized_view = normalized_image.view();
+    let mut records = Vec::new();
+
+    for (instance_id, bbox, _tight_mask) in build_instance_regions(instance_map) {
+        let patch_bounds = bbox.padded(image_h, image_w, padding);
+        let patch_mask = build_patch_mask(instance_map, instance_id, patch_bounds);
+        let mut pre_path = None;
+        let mut post_path = None;
+        let filename = format!("nucleus_{instance_id:04}.png");
+
+        if save_pre_normalized {
+            let mut pre_patch = crop_rgb_patch(image, patch_bounds);
+            apply_mask_to_rgb_patch(&mut pre_patch, &patch_mask.view());
+            let path = output_dir.join("pre_normalized_nuclei").join(&filename);
+            io::image::save_rgb_image(&path, &pre_patch.view())?;
+            pre_path = Some(path);
+        }
+
+        if save_post_normalized {
+            let mut post_patch = crop_rgb_patch(&normalized_view, patch_bounds);
+            apply_mask_to_rgb_patch(&mut post_patch, &patch_mask.view());
+            let path = output_dir.join("post_normalized_nuclei").join(&filename);
+            io::image::save_rgb_image(&path, &post_patch.view())?;
+            post_path = Some(path);
+        }
+
+        records.push(CropSaveRecord {
+            nucleus_id: instance_id,
+            bbox: (
+                patch_bounds.min_row,
+                patch_bounds.min_col,
+                patch_bounds.max_row,
+                patch_bounds.max_col,
+            ),
+            pre_path,
+            post_path,
+        });
+    }
+
+    Ok(records)
 }
 
 fn extract_all_features_from_instance_map(
@@ -614,9 +692,65 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
             }));
         }
 
-        let results = extract_all_features_from_instance_map(&image.view(), &instance_map.view(), use_gpu)
-            .map_err(pyo3::PyErr::from)?;
+        let results =
+            extract_all_features_from_instance_map(&image.view(), &instance_map.view(), use_gpu)
+                .map_err(pyo3::PyErr::from)?;
         feature_maps_to_pylist(py, results)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(signature = (image_path, mat_path, output_dir, mat_key=None, padding=10, save_pre_normalized=true, save_post_normalized=true))]
+    fn save_cropped_nuclei_from_files<'py>(
+        py: Python<'py>,
+        image_path: &str,
+        mat_path: &str,
+        output_dir: &str,
+        mat_key: Option<&str>,
+        padding: usize,
+        save_pre_normalized: bool,
+        save_post_normalized: bool,
+    ) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        use pyo3::types::{PyDict, PyList};
+
+        let image_path = expand_user_path(image_path);
+        let mat_path = expand_user_path(mat_path);
+        let output_dir = expand_user_path(output_dir);
+
+        let image = io::image::load_rgb_image(&image_path).map_err(pyo3::PyErr::from)?;
+        let (instance_map, _detected_key) =
+            io::mat::load_instance_map(&mat_path, mat_key).map_err(pyo3::PyErr::from)?;
+        let records = save_cropped_nuclei_from_instance_map(
+            &image.view(),
+            &instance_map.view(),
+            &output_dir,
+            padding,
+            save_pre_normalized,
+            save_post_normalized,
+        )
+        .map_err(pyo3::PyErr::from)?;
+
+        let out = PyList::empty_bound(py);
+        for record in records {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("nucleus_id", record.nucleus_id)?;
+            dict.set_item("bbox", record.bbox)?;
+            dict.set_item(
+                "pre_path",
+                record
+                    .pre_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+            )?;
+            dict.set_item(
+                "post_path",
+                record
+                    .post_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+            )?;
+            out.append(dict)?;
+        }
+        Ok(out)
     }
 
     Ok(())

@@ -282,9 +282,9 @@ fn bending_energy_from_contour_xy(points: &[(f64, f64)]) -> f64 {
 
     let mut dedup = Vec::<(f64, f64)>::with_capacity(points.len());
     for &(x, y) in points {
-        let keep = dedup
-            .last()
-            .map_or(true, |&(lx, ly)| (x - lx).abs() > 1e-12 || (y - ly).abs() > 1e-12);
+        let keep = dedup.last().map_or(true, |&(lx, ly)| {
+            (x - lx).abs() > 1e-12 || (y - ly).abs() > 1e-12
+        });
         if keep {
             dedup.push((x, y));
         }

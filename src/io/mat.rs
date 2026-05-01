@@ -49,7 +49,10 @@ struct MatArray {
     values: Vec<f64>,
 }
 
-pub fn load_instance_map(path: &Path, preferred_key: Option<&str>) -> Result<(Array2<u32>, String)> {
+pub fn load_instance_map(
+    path: &Path,
+    preferred_key: Option<&str>,
+) -> Result<(Array2<u32>, String)> {
     let bytes = fs::read(path)?;
     let endian = detect_endian(&bytes, path)?;
     let arrays = parse_numeric_arrays(&bytes, endian, path)?;
@@ -120,7 +123,11 @@ fn detect_endian(bytes: &[u8], path: &Path) -> Result<Endian> {
     }
 }
 
-fn parse_numeric_arrays(bytes: &[u8], endian: Endian, path: &Path) -> Result<HashMap<String, MatArray>> {
+fn parse_numeric_arrays(
+    bytes: &[u8],
+    endian: Endian,
+    path: &Path,
+) -> Result<HashMap<String, MatArray>> {
     let mut offset = HEADER_BYTES;
     let mut out: HashMap<String, MatArray> = HashMap::new();
     while offset + 8 <= bytes.len() {

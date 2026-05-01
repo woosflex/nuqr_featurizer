@@ -412,9 +412,7 @@ fn convex_hull_f64(mut pts: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 
     let mut lower: Vec<(f64, f64)> = Vec::new();
     for &p in &pts {
-        while lower.len() >= 2
-            && cross(lower[lower.len() - 2], lower[lower.len() - 1], p) <= 0.0
-        {
+        while lower.len() >= 2 && cross(lower[lower.len() - 2], lower[lower.len() - 1], p) <= 0.0 {
             lower.pop();
         }
         lower.push(p);
@@ -422,9 +420,7 @@ fn convex_hull_f64(mut pts: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
 
     let mut upper: Vec<(f64, f64)> = Vec::new();
     for &p in pts.iter().rev() {
-        while upper.len() >= 2
-            && cross(upper[upper.len() - 2], upper[upper.len() - 1], p) <= 0.0
-        {
+        while upper.len() >= 2 && cross(upper[upper.len() - 2], upper[upper.len() - 1], p) <= 0.0 {
             upper.pop();
         }
         upper.push(p);
@@ -456,8 +452,7 @@ fn point_in_polygon_or_on_edge(x: f64, y: f64, poly: &[(f64, f64)]) -> bool {
             return true;
         }
 
-        let intersects = ((yi > y) != (yj > y))
-            && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+        let intersects = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
         if intersects {
             inside = !inside;
         }

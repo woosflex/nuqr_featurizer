@@ -382,7 +382,8 @@ fn clahe_u8_cpu_exact_skimage(
                 }
             }
             clip_histogram(&mut hist, clim);
-            maps[ty * ns_hist_x + tx] = map_histogram_u16(&hist, (NR_OF_GRAY - 1) as u16, kernel_elements);
+            maps[ty * ns_hist_x + tx] =
+                map_histogram_u16(&hist, (NR_OF_GRAY - 1) as u16, kernel_elements);
         }
     }
 
@@ -422,8 +423,8 @@ fn clahe_u8_cpu_exact_skimage(
 
                     let top = (1.0 - wx) * v00 + wx * v01;
                     let bottom = (1.0 - wx) * v10 + wx * v11;
-                    let value = ((1.0 - wy) * top + wy * bottom)
-                        .clamp(0.0, (NR_OF_GRAY - 1) as f64);
+                    let value =
+                        ((1.0 - wy) * top + wy * bottom).clamp(0.0, (NR_OF_GRAY - 1) as f64);
                     result14[[y, x]] = value as u16;
                 }
             }
@@ -431,7 +432,10 @@ fn clahe_u8_cpu_exact_skimage(
     }
 
     let unpadded = result14
-        .slice(ndarray::s![pad_top..(hp - pad_bottom), pad_left..(wp - pad_right)])
+        .slice(ndarray::s![
+            pad_top..(hp - pad_bottom),
+            pad_left..(wp - pad_right)
+        ])
         .to_owned();
 
     Ok(rescale_u16_to_u8_full_range(&unpadded.view()))
