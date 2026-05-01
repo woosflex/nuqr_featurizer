@@ -64,15 +64,24 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --force-reinstall --no-deps dist/*.whl
           python - <<'PY'
-          import nuqr_featurizer as n
+          import nuxplore as n
+          import nuqr_featurizer as legacy
+
           assert hasattr(n, "__version__")
           assert hasattr(n, "extract_features")
           assert hasattr(n, "extract_features_from_files")
+          assert hasattr(n, "save_cropped_nuclei_from_files")
+          assert hasattr(n, "batch_extract_features")
+          assert hasattr(n, "batch_extract_and_crop")
+          assert hasattr(n, "BatchExtractor")
           assert hasattr(n, "check_gpu")
           assert hasattr(n, "get_gpu_device_count")
+          assert legacy.__version__ == n.__version__
+          assert hasattr(legacy, "extract_features")
+          assert hasattr(legacy, "extract_features_from_files")
           n.get_gpu_device_count()
-          n.check_gpu()
-          print("nuqr_featurizer wheel smoke test passed")
+          assert isinstance(n.check_gpu(), bool)
+          print("nuxplore wheel smoke test passed")
           PY
 
   linux:
