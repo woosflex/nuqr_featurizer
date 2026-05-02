@@ -26,7 +26,17 @@ const MI_INT64: u32 = 12;
 const MI_UINT64: u32 = 13;
 const MI_MATRIX: u32 = 14;
 
-const MX_LOGICAL_CLASS: u8 = 3;
+const MX_DOUBLE_CLASS: u8 = 6;
+const MX_SINGLE_CLASS: u8 = 7;
+const MX_INT8_CLASS: u8 = 8;
+const MX_UINT8_CLASS: u8 = 9;
+const MX_INT16_CLASS: u8 = 10;
+const MX_UINT16_CLASS: u8 = 11;
+const MX_INT32_CLASS: u8 = 12;
+const MX_UINT32_CLASS: u8 = 13;
+const MX_INT64_CLASS: u8 = 14;
+const MX_UINT64_CLASS: u8 = 15;
+const MX_LOGICAL_FLAG: u32 = 0x0200;
 
 #[derive(Clone, Copy)]
 enum Endian {
@@ -161,6 +171,10 @@ fn parse_matrix_element(payload: &[u8], endian: Endian) -> Result<Option<MatArra
     }
     let class_bits = read_u32(&flags.payload[0..4], endian)?;
     let class = (class_bits & 0xFF) as u8;
+    let is_logical = (class_bits & MX_LOGICAL_FLAG) != 0;
+    if !is_numeric_class(class) && !is_logical {
+        return Ok(None);
+    }
 
     let dims = parse_element(&payload[inner_offset..], endian)?;
     inner_offset += dims.total_size;
@@ -174,7 +188,13 @@ fn parse_matrix_element(payload: &[u8], endian: Endian) -> Result<Option<MatArra
     let expected_len = rows
         .checked_mul(cols)
         .ok_or_else(|| FeaturizerError::InvalidInput("matrix shape overflow".to_string()))?;
-    let values = parse_numeric_values(real.data_type, real.payload, expected_len, endian, class)?;
+    let values = parse_numeric_values(
+        real.data_type,
+        real.payload,
+        expected_len,
+        endian,
+        is_logical,
+    )?;
     Ok(Some(MatArray {
         name,
         rows,
@@ -266,7 +286,7 @@ fn parse_numeric_values(
     payload: &[u8],
     expected_len: usize,
     endian: Endian,
-    class: u8,
+    is_logical: bool,
 ) -> Result<Vec<f64>> {
     let item_size = item_size_for_type(data_type)?;
     let expected_bytes = expected_len
@@ -279,7 +299,7 @@ fn parse_numeric_values(
         )));
     }
 
-    if class == MX_LOGICAL_CLASS && data_type == MI_UINT8 {
+    if is_logical && data_type == MI_UINT8 {
         let mut out = Vec::with_capacity(expected_len);
         for b in payload.iter().take(expected_len) {
             out.push(if *b == 0 { 0.0 } else { 1.0 });
@@ -311,6 +331,22 @@ fn parse_numeric_values(
         out.push(val);
     }
     Ok(out)
+}
+
+fn is_numeric_class(class: u8) -> bool {
+    matches!(
+        class,
+        MX_DOUBLE_CLASS
+            | MX_SINGLE_CLASS
+            | MX_INT8_CLASS
+            | MX_UINT8_CLASS
+            | MX_INT16_CLASS
+            | MX_UINT16_CLASS
+            | MX_INT32_CLASS
+            | MX_UINT32_CLASS
+            | MX_INT64_CLASS
+            | MX_UINT64_CLASS
+    )
 }
 
 fn coerce_instance_map(array: &MatArray) -> Result<Array2<u32>> {
@@ -435,7 +471,7 @@ mod tests {
         let mut flags = Vec::new();
         flags.extend_from_slice(&(MI_UINT32).to_le_bytes());
         flags.extend_from_slice(&(8u32).to_le_bytes());
-        flags.extend_from_slice(&(MI_INT32).to_le_bytes());
+        flags.extend_from_slice(&(MX_INT32_CLASS as u32).to_le_bytes());
         flags.extend_from_slice(&0u32.to_le_bytes());
         matrix_payload.extend_from_slice(&flags);
 

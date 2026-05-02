@@ -176,7 +176,19 @@ fn key_to_point(key: ContourKey) -> (f64, f64) {
 
 pub(crate) fn largest_skimage_like_contour(mask: &ArrayView2<bool>) -> Option<Vec<(f64, f64)>> {
     let contours = find_contours_binary(mask);
-    contours.into_iter().max_by_key(|c| c.len())
+    // Python's max(contours, key=len) keeps the first item on equal-length ties.
+    // std::iter::max_by_key keeps the last equal maximum, which changes NEIS for
+    // masks with multiple same-length contours.
+    let mut best: Option<Vec<(f64, f64)>> = None;
+    for contour in contours {
+        if best
+            .as_ref()
+            .is_none_or(|current| contour.len() > current.len())
+        {
+            best = Some(contour);
+        }
+    }
+    best
 }
 
 fn find_contours_binary(mask: &ArrayView2<bool>) -> Vec<Vec<(f64, f64)>> {

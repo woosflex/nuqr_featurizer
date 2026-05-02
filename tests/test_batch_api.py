@@ -253,6 +253,24 @@ def test_extract_features_from_files_default_no_crop_outputs(tmp_path: Path) -> 
     assert not output_dir.exists()
 
 
+def test_legacy_import_shim_exports_current_public_api() -> None:
+    import nuqr_featurizer
+
+    expected = [
+        "__version__",
+        "extract_features",
+        "extract_features_from_files",
+        "save_cropped_nuclei_from_files",
+        "BatchExtractor",
+        "batch_extract_features",
+        "batch_extract_and_crop",
+        "check_gpu",
+        "get_gpu_device_count",
+    ]
+    for name in expected:
+        assert hasattr(nuqr_featurizer, name), f"missing legacy shim export: {name}"
+
+
 def test_batch_extract_and_crop_post_only(tmp_path: Path) -> None:
     from nuxplore.batch import batch_extract_and_crop
 
